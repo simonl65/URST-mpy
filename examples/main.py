@@ -14,7 +14,7 @@ def main():
 
         # Initialize UART 0 on pins GP0 (TX) and GP1 (RX)
         # On a Pico, UART(0) uses GP0/GP1 by default.
-        uart = machine.UART(0, baudrate=57600, tx=machine.Pin(0), rx=machine.Pin(1))
+        uart = machine.UART(0, baudrate=57600, tx=machine.Pin(0), rx=machine.Pin(1))  # pyright: ignore[reportCallIssue]
 
         # Initialize URST with the UART object
         transport = urst.Urst(uart)

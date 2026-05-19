@@ -15,7 +15,7 @@ except ImportError:
 import time
 
 try:
-    _ = time.ticks_ms
+    _ = time.ticks_ms  # type: ignore
 except AttributeError:
     # Desktop Python shim
     def ticks_ms():
@@ -24,8 +24,8 @@ except AttributeError:
     def ticks_diff(later, earlier):
         return later - earlier
 
-    time.ticks_ms = ticks_ms
-    time.ticks_diff = ticks_diff
+    time.ticks_ms = ticks_ms  # type: ignore
+    time.ticks_diff = ticks_diff  # type: ignore
 
 from . import constants
 from .codec_layer import (
@@ -180,8 +180,8 @@ class ProtocolLayer:
             logger.debug(f"Sending frame type {frame_type:#x}, seq {seq}, attempt {attempt + 1}")
             self.codec.write_frame(frame)
 
-            start_wait = time.ticks_ms()
-            while time.ticks_diff(time.ticks_ms(), start_wait) < constants.ACK_TIMEOUT_MS:
+            start_wait = time.ticks_ms()  # type: ignore
+            while time.ticks_diff(time.ticks_ms(), start_wait) < constants.ACK_TIMEOUT_MS:  # type: ignore
                 # Read fresh frames only, bypassing the queue
                 p = self.receive_frame(timeout_ms=100, use_queue=False)
                 if p:
