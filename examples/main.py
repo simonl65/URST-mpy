@@ -1,5 +1,6 @@
-import urst
 import time
+
+import urst
 
 # MicroPython example for Raspberry Pi Pico
 # This script demonstrates how to initialize URST using machine.UART
@@ -13,9 +14,7 @@ def main():
 
         # Initialize UART 0 on pins GP0 (TX) and GP1 (RX)
         # On a Pico, UART(0) uses GP0/GP1 by default.
-        uart = machine.UART(
-            0, baudrate=57600, tx=machine.Pin(0), rx=machine.Pin(1)
-        )
+        uart = machine.UART(0, baudrate=57600, tx=machine.Pin(0), rx=machine.Pin(1))  # pyright: ignore[reportCallIssue]
 
         # Initialize URST with the UART object
         transport = urst.Urst(uart)
@@ -42,7 +41,9 @@ def main():
 
     print("Sending message...")
     # send() handles fragmentation and reliable delivery
-    transport.send(b"Hello from URST on MicroPython!")
+    transport.send(
+        b"Hello from URST on MicroPython! This message may be fragmented if it's too long. URST will handle it for you. This is a test message to demonstrate the capabilities of URST over UART on a Raspberry Pi Pico. Enjoy using URST for your projects! URST ensures that even if the message is too long for a single UART frame, it will be split into fragments and reassembled correctly on the receiving end. Hello from URST on MicroPython! This message may be fragmented if it's too long. URST will handle it for you. This is a test message to demonstrate the capabilities of URST over UART on a Raspberry Pi Pico. Enjoy using URST for your projects! URST ensures that even if the message is too long for a single UART frame, it will be split into fragments and reassembled correctly on the receiving end. Hello from URST on MicroPython! This message may be fragmented if it's too long. URST will handle it for you. This is a test message to demonstrate the capabilities of URST over UART on a Raspberry Pi Pico. Enjoy using URST for your projects! URST ensures that even if the message is too long for a single UART frame, it will be split into fragments and reassembled correctly on the receiving end. "
+    )
 
     print("Waiting for response...")
     try:

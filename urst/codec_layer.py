@@ -150,8 +150,8 @@ class CodecLayer:
                 if second_zero != -1:
                     # Extract the frame
                     frame = bytes(self._rx_buffer[first_zero : second_zero + 1])
-                    # Remove from buffer
-                    del self._rx_buffer[: second_zero + 1]
+                    # Remove from buffer by reassigning to remaining slice
+                    self._rx_buffer = self._rx_buffer[second_zero + 1 :]
 
                     # If it's just two 0x00s with nothing between, it's not a valid frame
                     if len(frame) <= 2:
@@ -160,7 +160,7 @@ class CodecLayer:
 
                 # If no second zero, but we have a lot of junk before first zero, clear it
                 if first_zero > 0:
-                    del self._rx_buffer[:first_zero]
+                    self._rx_buffer = self._rx_buffer[first_zero:]
 
             # Read more data
             if hasattr(self.ser, "in_waiting"):
