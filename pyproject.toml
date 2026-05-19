@@ -1,0 +1,59 @@
+[project]
+name = "urst"
+version = "1.0.0"
+description = "MicroPython implementation of the Universal Reliable Serial Transport protocol [URST](https://github.com/simonl65/URST-Specification/blob/main/URST-Specification.md)"
+readme = "README.md"
+license = "SUL-1.0"
+license-files = [ "LICENSE.md" ]
+authors = [
+    { name = "Simon R. Lincoln", email = "oss@codeability.co.uk" }
+]
+requires-python = ">=3.12"
+dependencies = ["pyserial>=3.5",]
+
+[build-system]
+requires = ["uv_build>=0.9.28,<0.10.0"]
+build-backend = "uv_build"
+
+[tool.uv_build]
+package-dir = ""
+[tool.uv.build-backend]
+module-root = ""
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "pytest-cov>=5.0",
+    "ruff>=0.4",
+]
+
+
+# --- Ruff ---
+[tool.ruff]
+src = ["urst"]
+line-length = 80
+target-version = "py312"
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort
+    "UP",  # pyupgrade
+    "B",   # flake8-bugbear
+    "SIM", # flake8-simplify
+]
+ignore = ["E501"]  # line length handled by formatter
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+
+# --- Pytest ---
+[tool.pytest.ini_options]
+minversion = "6.0"
+pythonpath = ["urst"]
+testpaths = ["tests"]
+python_files = ["test_*.py", "*_test.py", "*_tests.py"]

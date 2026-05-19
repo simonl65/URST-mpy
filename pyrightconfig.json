@@ -1,0 +1,13 @@
+{
+  "include": [
+    "urst",
+    "tests"
+  ],
+  "extraPaths": [
+    "urst",
+    "/home/simon/.vscode/extensions/walklinewang.code-completion-for-micropython-0.1.11/code_completion/default"
+  ],
+  "typeCheckingMode": "basic",
+  "reportMissingImports": true,
+  "reportMissingTypeStubs": false
+}
