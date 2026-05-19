@@ -12,12 +12,17 @@ except ImportError:
 
 # MicroPython compatibility for time
 import time
+
 try:
     _ = time.ticks_ms
 except AttributeError:
     # Desktop Python shim
-    def ticks_ms(): return int(time.time() * 1000)
-    def ticks_diff(later, earlier): return later - earlier
+    def ticks_ms():
+        return int(time.time() * 1000)
+
+    def ticks_diff(later, earlier):
+        return later - earlier
+
     time.ticks_ms = ticks_ms
     time.ticks_diff = ticks_diff
 

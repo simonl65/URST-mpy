@@ -39,7 +39,9 @@ def send_configuration(
     baudrates_to_try = [configured_baud] + list(config.baudrates.keys())
     # Remove duplicates
     seen: set[int] = set()
-    baudrates_to_try = [x for x in baudrates_to_try if not (x in seen or seen.add(x))]
+    baudrates_to_try = [
+        x for x in baudrates_to_try if not (x in seen or seen.add(x))
+    ]
 
     for baud in baudrates_to_try:
         print(f"Trying to connect to {port} at baudrate {baud}")
@@ -73,7 +75,9 @@ def send_configuration(
                         if b"OK" not in resp:
                             resp += ser.read(64)
                             time.sleep(0.1)
-                        print(f"> {clean_cmd}  ->  {resp.decode(errors='ignore').strip()}")
+                        print(
+                            f"> {clean_cmd}  ->  {resp.decode(errors='ignore').strip()}"
+                        )
                         time.sleep(0.5)  # small delay between commands
 
                     ser.write(b"ATWR\r")  # ensure we save configuration
@@ -84,8 +88,13 @@ def send_configuration(
                     print(f"Failed to enter command mode at baudrate {baud}")
 
         except (serial.SerialException, OSError) as e:
-            if isinstance(e, FileNotFoundError) or getattr(e, "errno", None) == 2:
-                print(f"Port not available: {port!r}. Verify device connection and path.")
+            if (
+                isinstance(e, FileNotFoundError)
+                or getattr(e, "errno", None) == 2
+            ):
+                print(
+                    f"Port not available: {port!r}. Verify device connection and path."
+                )
                 return False
             print(f"Error at baudrate {baud}: {e}")
 
