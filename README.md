@@ -22,7 +22,7 @@
 Either
 
 ```bash
-mpremote mip install git@github.com:simonl65/URST-mpy.git
+mpremote mip install github:simonl65/URST-mpy
 ```
 
 or simply copy the `urst/` directory from this repository to the root of your MicroPython device's filesystem.
