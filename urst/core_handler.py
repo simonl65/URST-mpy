@@ -1,6 +1,17 @@
-import logging
+try:
+    import logging
+except ImportError:
+    from . import logging
 import math
-from typing import TYPE_CHECKING, Any
+import sys
+
+# MicroPython compatibility for typing
+try:
+    from typing import TYPE_CHECKING, Any
+except ImportError:
+    TYPE_CHECKING = False
+    # Minimal fallback
+    pass
 
 from . import constants
 from .codec_layer import CodecLayer
@@ -8,8 +19,6 @@ from .protocol_layer import ProtocolLayer
 
 if TYPE_CHECKING:
     from serial import Serial  # type: ignore
-else:
-    Serial = Any
 
 logger = logging.getLogger(__name__)
 
@@ -19,23 +28,35 @@ class Urst:
     Main interface for the Universal Reliable Serial Transport (URST) protocol.
     """
 
-    def __init__(self, port: str, baud: int, *, timeout: float = 1.0):
+    def __init__(self, port: Any, baud: int = 57600, *, timeout: float = 1.0):
         logger.debug("Initializing Urst")
         self.port = port
         self.baud = baud
         self.timeout = timeout
-        try:
-            from serial import Serial as SerialImpl  # type: ignore
-        except ImportError as exc:
-            raise RuntimeError(
-                "pyserial is required to use Urst transport functionality"
-            ) from exc
 
-        # Open serial port
-        self.ser: Serial = SerialImpl(
-            port=self.port, baudrate=self.baud, timeout=self.timeout
-        )
-        
+        if sys.implementation.name == "micropython":
+            import machine
+
+            if isinstance(port, machine.UART):
+                self.ser = port
+            else:
+                # port could be id (int)
+                self.ser = machine.UART(port, baudrate=baud)
+        else:
+            # Desktop implementation
+            if hasattr(port, "write") and hasattr(port, "read"):
+                # Already a serial-like object (e.g. mock or already opened serial)
+                self.ser = port
+            else:
+                try:
+                    from serial import Serial as SerialImpl  # type: ignore
+
+                    self.ser = SerialImpl(port=port, baudrate=baud, timeout=timeout)
+                except ImportError as exc:
+                    raise RuntimeError(
+                        "pyserial is required to use Urst on desktop Python"
+                    ) from exc
+
         self.codec = CodecLayer(self.ser)
         self.protocol = ProtocolLayer(self.codec)
         self._msg_id = 0

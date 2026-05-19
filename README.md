@@ -1,13 +1,14 @@
-# URST (Universal Reliable Serial Transport) for Python
+# URST (Universal Reliable Serial Transport) for MicroPython
 
-[![Python Version](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
 [![License](https://img.shields.io/badge/license-SUL--1.0-green.svg)](LICENSE.md)
 
-**URST for Python** is a professional-grade implementation of the [Universal Reliable Serial Transport (URST) protocol](URST-Specification.md). It provides reliable, error-checked, and fragmented data transmission over unreliable serial (UART/XBee) connections.
+**URST for MicroPython** is a professional-grade implementation of the [Universal Reliable Serial Transport (URST) protocol](URST-Specification.md). It provides reliable, error-checked, and fragmented data transmission over unreliable serial (UART/XBee) connections, specifically optimized for MicroPython devices like the Raspberry Pi Pico and ESP32.
 
 ## Key Features
 
 - **Reliable Delivery**: Strict stop-and-wait ARQ (Automatic Repeat Request) with configurable timeouts and retries.
+- **MicroPython Optimized**: Native support for `machine.UART` and `utime.ticks_ms()` for precise timing on hardware.
+- **Hardware Agnostic**: Works on Desktop Python (via `pyserial`) and MicroPython seamlessly.
 - **Error Detection**: Robust CRC-16/CCITT_FALSE validation for every frame.
 - **Robust Framing**: Uses COBS (Consistent Overhead Byte Stuffing) for zero-byte-free encoding, ensuring unambiguous frame delimiting via `0x00`.
 - **Message Fragmentation**: Automatically handles messages larger than the physical MTU (up to 8KB+ reassembly).
@@ -16,39 +17,53 @@
 
 ## Installation
 
-URST requires Python 3.12 or later and `pyserial`.
+### For MicroPython Devices
 
-### Using `uv` (Recommended)
+Simply copy the `urst/` directory from this repository to the root of your MicroPython device's filesystem.
 
-```bash
-uv add urst
-```
+### For Desktop Development
 
-### Using `pip`
+If you want to use it on your PC (e.g., for testing or gateway applications), install `pyserial` first:
 
 ```bash
-pip install urst
+pip install pyserial
 ```
 
-## Quick Start
+## Quick Start (MicroPython)
+
+```python
+import urst
+import machine
+import time
+
+# 1. Initialize UART on your device (e.g., Raspberry Pi Pico)
+uart = machine.UART(0, baudrate=57600, tx=machine.Pin(0), rx=machine.Pin(1))
+
+# 2. Initialize URST with the UART object
+transport = urst.Urst(uart)
+
+# 3. Send a message (automatically handles framing, CRC, and ACK waiting)
+# It will fragment large data into ~194 byte chunks automatically.
+transport.send(b"Hello from Pico!")
+
+# 4. Read a complete message (handles reassembly of fragments)
+while True:
+    message = transport.read()
+    if message:
+        print(f"Received: {message.decode()}")
+    time.sleep(0.1)
+```
+
+## Quick Start (Desktop Python)
 
 ```python
 from urst import Urst
-import logging
 
-# Configure logging to see protocol activity [Optional]
-logging.basicConfig(level=logging.INFO)
+# Initialize URST on your serial port (requires pyserial)
+transport = Urst(port="/dev/ttyUSB0", baud=57600)
 
-# Initialize URST on your serial port
-transport = Urst(port="/dev/ttyUSB0", baud=57600, timeout=1.0)
-
-# Send a message (automatically handles framing, CRC, and ACK waiting)
-transport.send(b"Hello, URST Device!")
-
-# Read a complete message (handles reassembly of fragments)
+transport.send(b"Hello from Desktop!")
 message = transport.read()
-if message:
-    print(f"Received: {message.decode()}")
 ```
 
 ## Protocol Architecture
@@ -63,7 +78,7 @@ URST follows a strictly layered architecture to ensure separation of concerns:
 ├───────────────────────────────────┤
 │     Transport Layer (Framing)     │  Frame Type, Sequence Numbers
 ├───────────────────────────────────┤
-│    Codec Layer (Encoding/IO)      │  COBS, CRC, UART
+│    Codec Layer (Encoding/IO)      │  COBS, CRC, UART (machine/pyserial)
 └───────────────────────────────────┘
 ```
 
@@ -71,20 +86,21 @@ For full technical details, please refer to the [URST Specification](URST-Specif
 
 ## Development
 
-This project uses [uv](https://docs.astral.sh/uv/) for dependency management.
-
 ### Setup
 
+This project uses [uv](https://docs.astral.sh/uv/) for local development and testing.
+
 ```bash
-git clone https://github.com/simonl65/urst-py.git
-cd urst-py
-uv sync
+git clone https://github.com/simonl65/urst-mpy.git
+cd urst-mpy
 ```
 
 ### Running Tests
 
+Since the package is at the root, you should set `PYTHONPATH` to ensure the tests find the package correctly:
+
 ```bash
-uv run pytest
+PYTHONPATH=. uv run pytest
 ```
 
 ### Linting & Formatting

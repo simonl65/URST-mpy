@@ -1,5 +1,25 @@
-import logging
-from typing import Any
+try:
+    import logging
+except ImportError:
+    from . import logging
+
+# MicroPython compatibility for typing
+try:
+    from typing import Any
+except ImportError:
+    # Minimal fallback for MicroPython
+    pass
+
+# MicroPython compatibility for time
+import time
+try:
+    _ = time.ticks_ms
+except AttributeError:
+    # Desktop Python shim
+    def ticks_ms(): return int(time.time() * 1000)
+    def ticks_diff(later, earlier): return later - earlier
+    time.ticks_ms = ticks_ms
+    time.ticks_diff = ticks_diff
 
 logger = logging.getLogger(__name__)
 
@@ -104,19 +124,17 @@ class CodecLayer:
         Write a complete physical frame to the serial port.
         """
         sent = self.ser.write(frame)
-        self.ser.flush()
+        if hasattr(self.ser, "flush"):
+            self.ser.flush()
         return sent
 
     def read_frame(self, timeout_ms: int = 1000) -> bytes | None:
         """
         Read from serial until a complete frame is found (between two 0x00 delimiters).
         """
-        import time
+        start_time = time.ticks_ms()
 
-        start_time = time.time()
-        timeout_s = timeout_ms / 1000.0
-
-        while (time.time() - start_time) < timeout_s:
+        while time.ticks_diff(time.ticks_ms(), start_time) < timeout_ms:
             # Check if we already have a frame in the buffer
             if b"\x00" in self._rx_buffer:
                 # Find the first 0x00
@@ -140,7 +158,13 @@ class CodecLayer:
                     del self._rx_buffer[:first_zero]
 
             # Read more data
-            bytes_to_read = max(1, getattr(self.ser, "in_waiting", 0))
+            if hasattr(self.ser, "in_waiting"):
+                bytes_to_read = max(1, self.ser.in_waiting)
+            elif hasattr(self.ser, "any"):
+                bytes_to_read = max(1, self.ser.any())
+            else:
+                bytes_to_read = 1
+
             data = self.ser.read(bytes_to_read)
             if data:
                 self._rx_buffer.extend(data)

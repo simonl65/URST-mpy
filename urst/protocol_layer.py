@@ -1,7 +1,26 @@
-import logging
+try:
+    import logging
+except ImportError:
+    from . import logging
 import struct
+
+# MicroPython compatibility for typing
+try:
+    from typing import Any
+except ImportError:
+    # Minimal fallback for MicroPython
+    pass
+
+# MicroPython compatibility for time
 import time
-from typing import Any
+try:
+    _ = time.ticks_ms
+except AttributeError:
+    # Desktop Python shim
+    def ticks_ms(): return int(time.time() * 1000)
+    def ticks_diff(later, earlier): return later - earlier
+    time.ticks_ms = ticks_ms
+    time.ticks_diff = ticks_diff
 
 from . import constants
 from .codec_layer import (
@@ -148,8 +167,8 @@ class ProtocolLayer:
             logger.debug(f"Sending frame type {frame_type:#x}, seq {seq}, attempt {attempt + 1}")
             self.codec.write_frame(frame)
 
-            start_wait = time.time()
-            while (time.time() - start_wait) < (constants.ACK_TIMEOUT_MS / 1000.0):
+            start_wait = time.ticks_ms()
+            while time.ticks_diff(time.ticks_ms(), start_wait) < constants.ACK_TIMEOUT_MS:
                 # Read fresh frames only, bypassing the queue
                 p = self.receive_frame(timeout_ms=100, use_queue=False)
                 if p:

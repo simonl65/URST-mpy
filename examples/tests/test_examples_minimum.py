@@ -22,7 +22,7 @@ def _load_minimum_module(monkeypatch) -> ModuleType:
     monkeypatch.setitem(sys.modules, "urst", urst_module)
 
     module_path = (
-        Path(__file__).resolve().parents[1] / "examples" / "minimum.py"
+        Path(__file__).resolve().parent.parent / "minimum.py"
     )
     spec = spec_from_file_location("_test_minimum_module", module_path)
     assert spec is not None
