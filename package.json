@@ -1,0 +1,30 @@
+{
+  "version": "1.0.0",
+  "description": "URST MicroPython library",
+  "urls": [
+    [
+      "urst/__init__.py",
+      "github:simonl65/URST-mpy/urst/__init__.py"
+    ],
+    [
+      "urst/codec_layer.py",
+      "github:simonl65/URST-mpy/urst/codec_layer.py"
+    ],
+    [
+      "urst/constants.py",
+      "github:simonl65/URST-mpy/urst/constants.py"
+    ],
+    [
+      "urst/core_handler.py",
+      "github:simonl65/URST-mpy/urst/core_handler.py"
+    ],
+    [
+      "urst/protocol_layer.py",
+      "github:simonl65/URST-mpy/urst/protocol_layer.py"
+    ],
+    [
+      "urst/transport_layer.py",
+      "github:simonl65/URST-mpy/urst/transport_layer.py"
+    ]
+  ]
+}
