@@ -19,7 +19,13 @@
 
 ### For MicroPython Devices
 
-Simply copy the `urst/` directory from this repository to the root of your MicroPython device's filesystem.
+Either
+
+```bash
+mpremote mip install git@github.com:simonl65/URST-mpy.git
+```
+
+or simply copy the `urst/` directory from this repository to the root of your MicroPython device's filesystem.
 
 ### For Desktop Development
 
@@ -93,14 +99,21 @@ This project uses [uv](https://docs.astral.sh/uv/) for local development and tes
 ```bash
 git clone https://github.com/simonl65/urst-mpy.git
 cd urst-mpy
+uv sync
 ```
 
 ### Running Tests
 
-Since the package is at the root, you should set `PYTHONPATH` to ensure the tests find the package correctly:
+If using UV:
 
 ```bash
-PYTHONPATH=. uv run pytest
+uv run pytest
+```
+
+If you aren't using UV you should set `PYTHONPATH` to ensure the tests find the package correctly:
+
+```bash
+PYTHONPATH=. pytest
 ```
 
 ### Linting & Formatting
