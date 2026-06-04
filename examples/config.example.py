@@ -12,6 +12,7 @@ MAX_FRAME_BYTES = 255  # Maximum allowed bytes per frame. Make this small enough
 XBEE_PAN_ID         = "3210"            # ID
 XBEE_BASE_PORT      = "/dev/ttyUSB0"
 XBEE_DEVICE_PORT    = "/dev/ttyUSB1"
+XBEE_UART_PORT      = 0                 # 0 or 1
 XBEE_BASE_NODEID    = "BASE01"          # NI (0-20 ASCII characters)
 XBEE_DEVICE_NODEID  = "NODE01"          # NI
 

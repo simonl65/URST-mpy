@@ -20,7 +20,7 @@ try:
     # Initialize UART 0 on pins GP0 (TX) and GP1 (RX)
     # On a Pico, UART(0) uses GP0/GP1 by default.
     uart = UART(
-        config.XBEE_DEVICE_PORT,
+        config.XBEE_UART_PORT,
         baudrate=config.SERIAL_BAUDRATE,
         tx=Pin(0),
         rx=Pin(1),
