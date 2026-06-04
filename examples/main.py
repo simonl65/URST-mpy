@@ -13,7 +13,7 @@ led.on()
 time.sleep(2)
 
 print(
-    f"Initializing URST with baudrate {config.SERIAL_BAUDRATE} on UART{config.XBEE_DEVICE_PORT}..."
+    f"Initializing URST with baudrate {config.SERIAL_BAUDRATE} on UART{config.XBEE_UART_PORT}..."
 )
 
 try:
