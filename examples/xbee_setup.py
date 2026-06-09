@@ -105,8 +105,9 @@ def send_configuration(
 if __name__ == "__main__":
     success = True
 
+    print("Configuring XBee Base Module...")
     if not send_configuration(
-        config.XBEE_BASE_PORT,
+        config.BASE_PORT,
         config.SERIAL_BAUDRATE,
         BASE_COMMANDS,
         GUARD_TIME,
@@ -114,8 +115,9 @@ if __name__ == "__main__":
     ):
         success = False
 
+    print("\nConfiguring XBee Device Module...")
     if not send_configuration(
-        config.XBEE_DEVICE_PORT,
+        config.DEVICE_PORT,
         config.SERIAL_BAUDRATE,
         DEVICE_COMMANDS,
         GUARD_TIME,
