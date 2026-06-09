@@ -1,5 +1,4 @@
 import pytest
-
 from urst import constants
 
 

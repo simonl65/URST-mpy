@@ -4,7 +4,6 @@ import sys
 from types import SimpleNamespace
 
 import pytest
-
 from urst import constants
 from urst.core_handler import Urst
 from urst.protocol_layer import build_frame
