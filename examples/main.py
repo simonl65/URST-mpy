@@ -10,7 +10,7 @@ from machine import UART, Pin
 print("URST MicroPython Example")
 led = Pin("LED", Pin.OUT)
 led.on()
-time.sleep(2)
+time.sleep(0.5)
 
 print(
     f"Initializing URST with baudrate {config.SERIAL_BAUDRATE} on UART{config.XBEE_UART_PORT}..."
@@ -21,9 +21,9 @@ try:
     # On a Pico, UART(0) uses GP0/GP1 by default.
     uart = UART(
         config.XBEE_UART_PORT,
-        baudrate=config.SERIAL_BAUDRATE,
-        tx=Pin(0),
-        rx=Pin(1),
+        baudrate=config.SERIAL_BAUDRATE,  # type: ignore
+        tx=Pin(0),  # type: ignore
+        rx=Pin(1),  # type: ignore
     )
 
     # Initialize URST with the UART object
@@ -66,7 +66,7 @@ try:
             break
 
         # Small sleep to be friendly to the MicroPython event loop
-        led.toggle()
+        led.toggle()  # type: ignore
         time.sleep(0.1)
 
 except KeyboardInterrupt:
@@ -74,6 +74,6 @@ except KeyboardInterrupt:
 
 finally:
     for _ in range(30):
-        led.toggle()
+        led.toggle()  # type: ignore
         time.sleep(0.05)
     led.off()
