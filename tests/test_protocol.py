@@ -1,9 +1,7 @@
 import math
 import struct
-from typing import Optional
 
 import pytest
-
 from urst import constants
 from urst.codec_layer import (
     calculate_crc16,
@@ -115,12 +113,12 @@ class TestFrameBuilding:
         """CRC MUST be calculated over type+seq+payload BEFORE COBS (§3.2.4)."""
         payload: bytes = b"verification"
         frame: bytes = build_frame(FRAME_DATA, 1, payload)
-        parsed: Optional[dict] = parse_frame(frame)
+        parsed: dict | None = parse_frame(frame)
         assert parsed is not None, "Valid frame must parse successfully"
         logical: bytes = bytes([FRAME_DATA, 1]) + payload
         expected_crc: int = calculate_crc16(logical)
         interior: bytes = frame[1:-1]
-        decoded: Optional[bytes] = cobs_decode(interior)
+        decoded: bytes | None = cobs_decode(interior)
         assert decoded is not None
         raw_crc: int = struct.unpack_from("<H", decoded[-2:])[0]
         assert raw_crc == expected_crc, (
@@ -129,14 +127,14 @@ class TestFrameBuilding:
 
     def test_empty_payload_frame(self) -> None:
         frame: bytes = build_frame(FRAME_DATA, 0)
-        parsed: Optional[dict] = parse_frame(frame)
+        parsed: dict | None = parse_frame(frame)
         assert parsed is not None
         assert parsed["payload"] == b""
 
     def test_full_payload_frame(self) -> None:
         payload: bytes = bytes(range(200))
         frame: bytes = build_frame(FRAME_DATA, 42, payload)
-        parsed: Optional[dict] = parse_frame(frame)
+        parsed: dict | None = parse_frame(frame)
         assert parsed is not None
         assert parsed["payload"] == payload
 
@@ -145,7 +143,7 @@ class TestFrameBuilding:
         oversized: bytes = bytes(201)
         try:
             result: bytes = build_frame(FRAME_DATA, 0, oversized)
-            parsed: Optional[dict] = parse_frame(result)
+            parsed: dict | None = parse_frame(result)
             if parsed is not None:
                 assert len(parsed["payload"]) <= MAX_PAYLOAD_SIZE, (
                     "Payload MUST NOT exceed MAX_PAYLOAD_SIZE"
@@ -156,7 +154,7 @@ class TestFrameBuilding:
     def test_sequence_number_in_parsed_frame(self) -> None:
         seq: int
         frame: bytes
-        parsed: Optional[dict]
+        parsed: dict | None
         for seq in [0, 1, 127, 254, 255]:
             frame = build_frame(FRAME_DATA, seq, b"x")
             parsed = parse_frame(frame)
@@ -166,7 +164,7 @@ class TestFrameBuilding:
     def test_frame_type_in_parsed_frame(self) -> None:
         ftype: int
         frame: bytes
-        parsed: Optional[dict]
+        parsed: dict | None
         for ftype in [
             FRAME_DATA,
             FRAME_ACK,
@@ -191,7 +189,7 @@ class TestFrameParsing:
     def test_valid_data_frame_parses(self) -> None:
         payload: bytes = b"hello URST"
         frame: bytes = build_frame(FRAME_DATA, 7, payload)
-        parsed: Optional[dict] = parse_frame(frame)
+        parsed: dict | None = parse_frame(frame)
         assert parsed is not None
         assert parsed["type"] == FRAME_DATA
         assert parsed["seq"] == 7
@@ -201,14 +199,14 @@ class TestFrameParsing:
         """CRC failures MUST cause silent discard – parse_frame returns None (§5.3.1)."""
         frame: bytes = build_frame(FRAME_DATA, 0, b"data")
         corrupted: bytes = _corrupt_crc(frame)
-        result: Optional[dict] = parse_frame(corrupted)
+        result: dict | None = parse_frame(corrupted)
         assert result is None, "Frame with bad CRC MUST be discarded (§5.3.1)"
 
     def test_cobs_failure_returns_none(self) -> None:
         """COBS decoding failures MUST cause silent discard (§5.3.2)."""
         raw: bytearray = bytearray(b"\x00" + b"\x05\x11\x22\x33\x44" + b"\x00")
         raw[3] = 0x00
-        result: Optional[dict] = parse_frame(bytes(raw))
+        result: dict | None = parse_frame(bytes(raw))
         assert result is None, (
             "Frame with invalid COBS MUST be discarded (§5.3.2)"
         )
@@ -216,18 +214,18 @@ class TestFrameParsing:
     def test_unknown_frame_type_silently_discarded(self) -> None:
         """Unknown frame types MUST be silently discarded (§3.2.1)."""
         frame: bytes = _make_physical(0x15, 0, b"")
-        result: Optional[dict] = parse_frame(frame)
+        result: dict | None = parse_frame(frame)
 
     def test_frame_type_zero_never_used(self) -> None:
         """Frame type 0x00 MUST NOT be used (§3.2.1)."""
         frame: bytes = _make_physical(0x00, 0, b"")
-        result: Optional[dict] = parse_frame(frame)
+        result: dict | None = parse_frame(frame)
         assert result is None or result.get("type") != 0x00
 
     def test_single_byte_interior_too_short(self) -> None:
         """A frame that is too short to contain a valid header+CRC must be rejected."""
         bad: bytes = b"\x00\x01\x00"
-        result: Optional[dict] = parse_frame(bad)
+        result: dict | None = parse_frame(bad)
         assert result is None
 
     def test_bit_flip_in_payload_detected(self) -> None:
@@ -235,11 +233,11 @@ class TestFrameParsing:
         corrupted: bytearray = bytearray(frame)
         mid: int = len(corrupted) // 2
         corrupted[mid] ^= 0x01
-        result: Optional[dict] = parse_frame(bytes(corrupted))
+        result: dict | None = parse_frame(bytes(corrupted))
         assert result is None
 
     def test_completely_garbled_frame(self) -> None:
-        result: Optional[dict] = parse_frame(b"\x00\xff\xfe\xfd\xfc\x00")
+        result: dict | None = parse_frame(b"\x00\xff\xfe\xfd\xfc\x00")
         assert result is None
 
 
@@ -250,7 +248,7 @@ class TestSequenceNumbers:
         """Sequence numbers are 8-bit (0–255)."""
         seq: int
         frame: bytes
-        parsed: Optional[dict]
+        parsed: dict | None
         for seq in [0, 1, 127, 254, 255]:
             frame = build_frame(FRAME_DATA, seq, b"x")
             parsed = parse_frame(frame)
@@ -260,7 +258,7 @@ class TestSequenceNumbers:
         """ACK MUST echo the sequence number of the acknowledged frame (§5.2.1)."""
         seq: int
         ack_frame: bytes
-        parsed: Optional[dict]
+        parsed: dict | None
         for seq in [0, 1, 100, 255]:
             ack_frame = build_frame(FRAME_ACK, seq)
             parsed = parse_frame(ack_frame)
@@ -271,7 +269,7 @@ class TestSequenceNumbers:
         """NAK MUST echo the sequence number of the rejected frame (§5.2.2)."""
         seq: int
         nak_frame: bytes
-        parsed: Optional[dict]
+        parsed: dict | None
         for seq in [0, 42, 255]:
             nak_frame = build_frame(FRAME_NAK, seq)
             parsed = parse_frame(nak_frame)
@@ -281,26 +279,26 @@ class TestSequenceNumbers:
     def test_ack_has_empty_payload(self) -> None:
         """ACK frames MUST have empty payloads (§5.2.1, §7.4)."""
         frame: bytes = build_frame(FRAME_ACK, 5)
-        parsed: Optional[dict] = parse_frame(frame)
+        parsed: dict | None = parse_frame(frame)
         assert parsed is not None
         assert parsed["payload"] == b"", "ACK payload MUST be empty"
 
     def test_nak_has_empty_payload(self) -> None:
         """NAK frames MUST have empty payloads (§5.2.2, §7.4)."""
         frame: bytes = build_frame(FRAME_NAK, 5)
-        parsed: Optional[dict] = parse_frame(frame)
+        parsed: dict | None = parse_frame(frame)
         assert parsed is not None
         assert parsed["payload"] == b"", "NAK payload MUST be empty"
 
     def test_busy_has_empty_payload(self) -> None:
         frame: bytes = build_frame(FRAME_BUSY, 0)
-        parsed: Optional[dict] = parse_frame(frame)
+        parsed: dict | None = parse_frame(frame)
         assert parsed is not None
         assert parsed["payload"] == b"", "BUSY payload MUST be empty (§3.2.1)"
 
     def test_ready_has_empty_payload(self) -> None:
         frame: bytes = build_frame(FRAME_READY, 0)
-        parsed: Optional[dict] = parse_frame(frame)
+        parsed: dict | None = parse_frame(frame)
         assert parsed is not None
         assert parsed["payload"] == b"", "READY payload MUST be empty (§3.2.1)"
 
@@ -313,7 +311,7 @@ class TestFragmentation:
         data: bytes = b"A" * 50
         payload: bytes = _build_frag_payload(1, 0, 3, data)
         frame: bytes = build_frame(FRAME_FRAG, 0, payload)
-        parsed: Optional[dict] = parse_frame(frame)
+        parsed: dict | None = parse_frame(frame)
         assert parsed is not None
         assert parsed["type"] == FRAME_FRAG
         p: bytes = parsed["payload"]
@@ -330,7 +328,7 @@ class TestFragmentation:
         payload: bytes = _build_frag_payload(0, 0, 1, data)
         assert len(payload) == MAX_PAYLOAD_SIZE - 2
         frame: bytes = build_frame(FRAME_FRAG, 0, payload)
-        parsed: Optional[dict] = parse_frame(frame)
+        parsed: dict | None = parse_frame(frame)
         assert parsed is not None
 
     def test_fragment_data_exceeding_max_rejected(self) -> None:
@@ -381,7 +379,7 @@ class TestFragmentation:
         """Single-frame messages MUST use DATA frame type, NOT FRAG (§6.4)."""
         payload: bytes = b"short"
         frame: bytes = build_frame(FRAME_DATA, 0, payload)
-        parsed: Optional[dict] = parse_frame(frame)
+        parsed: dict | None = parse_frame(frame)
         assert parsed["type"] == FRAME_DATA, (
             "Messages < 194 bytes MUST use DATA, not FRAG (§6.4)"
         )
@@ -457,7 +455,7 @@ class TestConnectPayload:
     def test_connect_frame_builds_correctly(self) -> None:
         payload: bytes = self._build_connect_payload()
         frame: bytes = build_frame(FRAME_CONNECT, 0, payload)
-        parsed: Optional[dict] = parse_frame(frame)
+        parsed: dict | None = parse_frame(frame)
         assert parsed is not None
         assert parsed["type"] == FRAME_CONNECT
         assert parsed["payload"] == payload
@@ -465,7 +463,7 @@ class TestConnectPayload:
     def test_connect_ack_frame_builds_correctly(self) -> None:
         payload: bytes = self._build_connect_payload()
         frame: bytes = build_frame(FRAME_CONNECT_ACK, 0, payload)
-        parsed: Optional[dict] = parse_frame(frame)
+        parsed: dict | None = parse_frame(frame)
         assert parsed is not None
         assert parsed["type"] == FRAME_CONNECT_ACK
 
@@ -501,7 +499,7 @@ class TestErrorFrame:
     def test_error_frame_type(self) -> None:
         payload: bytes = self._build_error_payload()
         frame: bytes = build_frame(FRAME_ERROR, 0, payload)
-        parsed: Optional[dict] = parse_frame(frame)
+        parsed: dict | None = parse_frame(frame)
         assert parsed["type"] == FRAME_ERROR
 
     def test_capability_exceeded_error_code(self) -> None:
@@ -532,18 +530,18 @@ class TestAbortFrame:
 
     def test_abort_frame_type(self) -> None:
         frame: bytes = build_frame(FRAME_ABORT, 0)
-        parsed: Optional[dict] = parse_frame(frame)
+        parsed: dict | None = parse_frame(frame)
         assert parsed["type"] == FRAME_ABORT
 
     def test_abort_empty_payload(self) -> None:
         frame: bytes = build_frame(FRAME_ABORT, 0)
-        parsed: Optional[dict] = parse_frame(frame)
+        parsed: dict | None = parse_frame(frame)
         assert len(parsed["payload"]) == 0
 
     def test_abort_with_reason_code(self) -> None:
         """ABORT MAY carry a 1-byte reason code (§5.7.2)."""
         frame: bytes = build_frame(FRAME_ABORT, 0, b"\x01")
-        parsed: Optional[dict] = parse_frame(frame)
+        parsed: dict | None = parse_frame(frame)
         assert parsed is not None
         assert len(parsed["payload"]) == 1
         assert parsed["payload"][0] == 0x01
@@ -551,7 +549,7 @@ class TestAbortFrame:
     def test_abort_payload_max_16_bytes(self) -> None:
         """ABORT payload length MUST be 0 or 1 per §5.7.2 (spec says 0-16 in table)."""
         frame: bytes = build_frame(FRAME_ABORT, 0, b"\x02")
-        parsed: Optional[dict] = parse_frame(frame)
+        parsed: dict | None = parse_frame(frame)
         assert parsed is not None
         assert len(parsed["payload"]) <= 16
 
@@ -595,7 +593,7 @@ class TestFrameEncodingProcess:
         payload: bytes = b"order matters"
         frame: bytes = build_frame(FRAME_DATA, 0, payload)
         interior: bytes = frame[1:-1]
-        decoded: Optional[bytes] = cobs_decode(interior)
+        decoded: bytes | None = cobs_decode(interior)
         assert decoded is not None
         raw_crc: int = struct.unpack_from("<H", decoded[-2:])[0]
         logical: bytes = bytes([FRAME_DATA, 0]) + payload
@@ -611,7 +609,7 @@ class TestNonConformance:
     def test_ack_with_payload_is_nonconformant(self) -> None:
         """ACK/NAK with non-empty payloads is NON-CONFORMANT (§7.4)."""
         frame: bytes = build_frame(FRAME_ACK, 0, b"bad")
-        parsed: Optional[dict] = parse_frame(frame)
+        parsed: dict | None = parse_frame(frame)
         if parsed is not None:
             pytest.xfail(
                 "ACK with non-empty payload is NON-CONFORMANT per §7.4 – "
@@ -638,7 +636,7 @@ class TestFrameSizeBoundaries:
         """Minimum logical frame = 2 bytes (§3.3)."""
         frame: bytes = build_frame(FRAME_ACK, 0)
         interior: bytes = frame[1:-1]
-        decoded: Optional[bytes] = cobs_decode(interior)
+        decoded: bytes | None = cobs_decode(interior)
         assert len(decoded) == 4, (
             "Header-only logical frame + CRC must be 4 bytes"
         )
@@ -647,7 +645,7 @@ class TestFrameSizeBoundaries:
         """Maximum logical frame = 202 bytes (§3.3)."""
         frame: bytes = build_frame(FRAME_DATA, 0, bytes(MAX_PAYLOAD_SIZE))
         interior: bytes = frame[1:-1]
-        decoded: Optional[bytes] = cobs_decode(interior)
+        decoded: bytes | None = cobs_decode(interior)
         assert len(decoded) == 204, "Max logical frame + CRC must be 204 bytes"
 
     def test_physical_frame_under_max(self) -> None:
@@ -679,7 +677,7 @@ class TestMiscellaneous:
         ]
         ft: int
         frame: bytes
-        parsed: Optional[dict]
+        parsed: dict | None
         for ft in types:
             frame = build_frame(ft, 0)
             parsed = parse_frame(frame)
@@ -690,8 +688,8 @@ class TestMiscellaneous:
         """Each frame is fully independent; parsing one must not affect another."""
         f1: bytes = build_frame(FRAME_DATA, 1, b"frame one")
         f2: bytes = build_frame(FRAME_DATA, 2, b"frame two")
-        p1: Optional[dict] = parse_frame(f1)
-        p2: Optional[dict] = parse_frame(f2)
+        p1: dict | None = parse_frame(f1)
+        p2: dict | None = parse_frame(f2)
         assert p1["seq"] == 1 and p1["payload"] == b"frame one"
         assert p2["seq"] == 2 and p2["payload"] == b"frame two"
 
@@ -716,7 +714,7 @@ class TestMiscellaneous:
                 test_frame: bytes = (
                     bytes([0x00]) + bytes(corrupted) + bytes([0x00])
                 )
-                result: Optional[dict] = parse_frame(test_frame)
+                result: dict | None = parse_frame(test_frame)
                 if result is None:
                     caught += 1
         total: int = len(interior) * 8
@@ -728,14 +726,14 @@ class TestMiscellaneous:
         """Payload of all zeros is valid and must survive COBS round-trip."""
         payload: bytes = bytes(50)
         frame: bytes = build_frame(FRAME_DATA, 0, payload)
-        parsed: Optional[dict] = parse_frame(frame)
+        parsed: dict | None = parse_frame(frame)
         assert parsed is not None
         assert parsed["payload"] == payload
 
     def test_frame_with_all_ff_payload(self) -> None:
         payload: bytes = bytes([0xFF] * 100)
         frame: bytes = build_frame(FRAME_DATA, 0, payload)
-        parsed: Optional[dict] = parse_frame(frame)
+        parsed: dict | None = parse_frame(frame)
         assert parsed is not None
         assert parsed["payload"] == payload
 
@@ -743,6 +741,6 @@ class TestMiscellaneous:
         """254-byte boundary in COBS encoding must be handled correctly."""
         payload: bytes = bytes([i % 255 + 1 for i in range(252)])
         frame: bytes = build_frame(FRAME_DATA, 0, payload)
-        parsed: Optional[dict] = parse_frame(frame)
+        parsed: dict | None = parse_frame(frame)
         assert parsed is not None
         assert parsed["payload"] == payload

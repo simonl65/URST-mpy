@@ -1,5 +1,4 @@
 import struct
-from typing import Optional
 
 from urst.codec_layer import (
     calculate_crc16,
@@ -96,7 +95,7 @@ class TestCOBS:
         assert enc == b"\x01", "COBS encode of empty data MUST return 0x01"
 
     def test_empty_input_decode(self) -> None:
-        dec: Optional[bytes] = cobs_decode(b"\x01")
+        dec: bytes | None = cobs_decode(b"\x01")
         assert dec == b""
 
     def test_no_zero_bytes_in_output(self) -> None:
@@ -116,7 +115,7 @@ class TestCOBS:
         data: bytes = b"\x11\x22\x00\x33\x00\x44"
         enc: bytes = cobs_encode(data)
         assert 0x00 not in enc
-        dec: Optional[bytes] = cobs_decode(enc)
+        dec: bytes | None = cobs_decode(enc)
         assert dec == data
 
     def test_roundtrip_no_zeros(self) -> None:
@@ -141,7 +140,7 @@ class TestCOBS:
         data: bytes = bytes([i % 253 + 1 for i in range(254)])
         enc: bytes = cobs_encode(data)
         assert 0x00 not in enc
-        dec: Optional[bytes] = cobs_decode(enc)
+        dec: bytes | None = cobs_decode(enc)
         assert dec == data
 
     def test_embedded_zero_in_encoded_is_failure(self) -> None:
@@ -149,7 +148,7 @@ class TestCOBS:
         valid_enc: bytes = cobs_encode(b"hello world")
         corrupted: bytearray = bytearray(valid_enc)
         corrupted[3] = 0x00
-        result: Optional[bytes] = cobs_decode(bytes(corrupted))
+        result: bytes | None = cobs_decode(bytes(corrupted))
         assert result is None, (
             "cobs_decode MUST return None for data containing embedded 0x00 (§3.5.4)"
         )
