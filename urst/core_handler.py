@@ -18,7 +18,7 @@ from .codec_layer import CodecLayer
 from .protocol_layer import ProtocolLayer
 
 if TYPE_CHECKING:
-    from serial import Serial  # type: ignore
+    pass  # type: ignore
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +41,7 @@ class Urst:
                 self.ser = port
             else:
                 # port could be id (int)
-                self.ser = machine.UART(port, baudrate=baud)
+                self.ser = machine.UART(port, baudrate=baud)  # type: ignore
         else:
             # Desktop implementation
             if hasattr(port, "write") and hasattr(port, "read"):
