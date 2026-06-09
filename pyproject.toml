@@ -1,6 +1,6 @@
 [project]
 name = "urst"
-version = "1.0.0"
+version = "1.0.1"
 description = "MicroPython implementation of the Universal Reliable Serial Transport protocol [URST](https://github.com/simonl65/URST-Specification/blob/main/URST-Specification.md)"
 readme = "README.md"
 license = "SUL-1.0"
@@ -10,7 +10,7 @@ requires-python = ">=3.12"
 dependencies = ["pyserial>=3.5"]
 
 [build-system]
-requires = ["uv_build>=0.9.28,<0.10.0"]
+requires = ["uv_build>=0.11.19"]
 build-backend = "uv_build"
 
 [tool.uv_build]
@@ -19,12 +19,7 @@ package-dir = ""
 module-root = ""
 
 [dependency-groups]
-dev = [
-    "pytest>=8.0",
-    "pytest-cov>=5.0",
-    "ruff>=0.4",
-    "uv-build>=0.11.19",
-]
+dev = ["pytest>=8.0", "pytest-cov>=5.0", "ruff>=0.4", "uv-build>=0.11.19"]
 
 
 # --- Ruff ---
