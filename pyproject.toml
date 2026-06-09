@@ -4,12 +4,10 @@ version = "1.0.0"
 description = "MicroPython implementation of the Universal Reliable Serial Transport protocol [URST](https://github.com/simonl65/URST-Specification/blob/main/URST-Specification.md)"
 readme = "README.md"
 license = "SUL-1.0"
-license-files = [ "LICENSE.md" ]
-authors = [
-    { name = "Simon R. Lincoln", email = "oss@codeability.co.uk" }
-]
+license-files = ["LICENSE.md"]
+authors = [{ name = "Simon R. Lincoln", email = "oss@codeability.co.uk" }]
 requires-python = ">=3.12"
-dependencies = ["pyserial>=3.5",]
+dependencies = ["pyserial>=3.5"]
 
 [build-system]
 requires = ["uv_build>=0.9.28,<0.10.0"]
@@ -25,6 +23,7 @@ dev = [
     "pytest>=8.0",
     "pytest-cov>=5.0",
     "ruff>=0.4",
+    "uv-build>=0.11.19",
 ]
 
 
@@ -33,18 +32,21 @@ dev = [
 src = ["urst"]
 line-length = 80
 target-version = "py312"
+exclude = ["build", "dist", ".venv", "tests"]
 
 [tool.ruff.lint]
 select = [
     "E",   # pycodestyle errors
     "W",   # pycodestyle warnings
-    "F",   # pyflakes
+    "F",   # pyflakes errors
     "I",   # isort
     "UP",  # pyupgrade
-    "B",   # flake8-bugbear
+    "B",   # flake8-bugbear bug-hunting (e.g., bare except)
     "SIM", # flake8-simplify
+    "S",   # security
+    "I",   # isort imports
 ]
-ignore = ["E501"]  # line length handled by formatter
+ignore = ["E501", "SIM105"]
 
 [tool.ruff.format]
 quote-style = "double"
