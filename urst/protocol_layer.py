@@ -32,6 +32,7 @@ except AttributeError:
     time.ticks_ms = ticks_ms  # type: ignore
     time.ticks_diff = ticks_diff  # type: ignore
 
+from collections import deque
 from . import constants
 from .codec_layer import (
     calculate_crc16,
@@ -139,7 +140,7 @@ class ProtocolLayer:
         self.expected_recv_seq = 0
         self.last_received_seq = -1
         self.is_connected = False
-        self._recv_queue: list[dict] = []
+        self._recv_queue = deque((), constants.MAX_FRAGMENTS)  # O(1) popleft on MicroPython
         logger.debug("Initializing Protocol Layer")
 
     def connect(self) -> bool:
@@ -216,7 +217,7 @@ class ProtocolLayer:
     def receive_frame(self, timeout_ms: int | None = None, use_queue: bool = True) -> dict | None:
         """Receive a frame and handle ACKs/seq checks (§5.1.2, §5.6.2)."""
         if use_queue and self._recv_queue:
-            return self._recv_queue.pop(0)
+            return self._recv_queue.popleft()
 
         if timeout_ms is None:
             timeout_ms = constants.ACK_TIMEOUT_MS
