@@ -2,7 +2,12 @@ try:
     import logging
 except ImportError:
     from . import logging
+
 import struct
+
+# Pre-computed CONNECT capability payload (fixed protocol constants).
+# Hoisted to avoid re-running struct.pack on every handshake call.
+_CONNECT_PAYLOAD = struct.pack('<BHBBHBB', 4, 8192, 32, 1, 1000, 3, 0)
 
 # MicroPython compatibility for typing
 try:  # noqa: SIM105
@@ -134,7 +139,7 @@ class ProtocolLayer:
 
     def connect(self) -> bool:
         """Perform the CONNECT handshake with retries (§5.6)."""
-        payload = struct.pack("<BHBBHBB", 4, 8192, 32, 1, 1000, 3, 0)
+        payload = _CONNECT_PAYLOAD
         for attempt in range(constants.MAX_RETRIES + 1):
             logger.debug(f"Handshake attempt {attempt + 1}")
             self.codec.write_frame(build_frame(constants.FRAME_CONNECT, 0, payload))
@@ -232,7 +237,7 @@ class ProtocolLayer:
         }:
             if ft == constants.FRAME_CONNECT or seq == self.expected_recv_seq:
                 if ft == constants.FRAME_CONNECT:
-                    payload = struct.pack("<BHBBHBB", 4, 8192, 32, 1, 1000, 3, 0)
+                    payload = _CONNECT_PAYLOAD
                     self.codec.write_frame(build_frame(constants.FRAME_CONNECT_ACK, seq, payload))
                     (
                         self.next_send_seq,
