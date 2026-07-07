@@ -19,3 +19,5 @@ ruff_cache/
 # Package specific
 **/config.py
 .agents
+.kiro
+
