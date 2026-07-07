@@ -42,7 +42,9 @@ from .codec_layer import (
 
 logger = logging.getLogger(__name__)
 
-_VALID_FRAME_TYPES = {
+# Module-level tuples avoid re-allocating set objects on each membership test.
+# Using tuple for MicroPython portability (frozenset availability varies by port).
+_VALID_FRAME_TYPES = (
     constants.FRAME_DATA,
     constants.FRAME_ACK,
     constants.FRAME_NAK,
@@ -53,16 +55,19 @@ _VALID_FRAME_TYPES = {
     constants.FRAME_ABORT,
     constants.FRAME_BUSY,
     constants.FRAME_READY,
-}
+)
+_EMPTY_PAYLOAD_TYPES = (
+    constants.FRAME_ACK,
+    constants.FRAME_NAK,
+    constants.FRAME_BUSY,
+    constants.FRAME_READY,
+)
+_DATA_FRAG_TYPES = (constants.FRAME_DATA, constants.FRAME_FRAG)
+_PAYLOAD_FRAME_TYPES = (constants.FRAME_DATA, constants.FRAME_FRAG, constants.FRAME_CONNECT)
 
 
-def _is_empty_payload_only_type(frame_type: int) -> bool:
-    return frame_type in {
-        constants.FRAME_ACK,
-        constants.FRAME_NAK,
-        constants.FRAME_BUSY,
-        constants.FRAME_READY,
-    }
+def _is_empty_payload_only_type(frame_type):
+    return frame_type in _EMPTY_PAYLOAD_TYPES
 
 
 def build_frame(frame_type: int, seq: int, payload: bytes = b"") -> bytes:
@@ -200,10 +205,7 @@ class ProtocolLayer:
 
                     # If it's a payload frame, it's already been ACKed by receive_frame.
                     # We must queue it so Urst.read() can find it later.
-                    if p["type"] in {
-                        constants.FRAME_DATA,
-                        constants.FRAME_FRAG,
-                    }:
+                    if p["type"] in _DATA_FRAG_TYPES:
                         logger.debug(f"Queuing payload frame type {p['type']} received during wait")
                         self._recv_queue.append(p)
             else:
@@ -227,14 +229,10 @@ class ProtocolLayer:
             return None
         ft, seq = p["type"], p["seq"]
 
-        if ft in {constants.FRAME_ACK, constants.FRAME_NAK}:
+        if ft == constants.FRAME_ACK or ft == constants.FRAME_NAK:
             return p
 
-        if ft in {
-            constants.FRAME_DATA,
-            constants.FRAME_FRAG,
-            constants.FRAME_CONNECT,
-        }:
+        if ft in _PAYLOAD_FRAME_TYPES:
             if ft == constants.FRAME_CONNECT or seq == self.expected_recv_seq:
                 if ft == constants.FRAME_CONNECT:
                     payload = _CONNECT_PAYLOAD
