@@ -43,13 +43,9 @@ def calculate_crc16(data: bytes | bytearray) -> int:
     return crc
 
 
-def serialize_crc(crc: int) -> bytes:
-    """
-    Serialize the CRC into 2 bytes, little-endian.
-    """
-    import struct
-
-    return struct.pack("<H", crc)
+def serialize_crc(crc):
+    """Serialize CRC into 2 bytes, little-endian (no struct dependency)."""
+    return bytes([crc & 0xFF, (crc >> 8) & 0xFF])
 
 
 def cobs_encode(data: bytes | bytearray) -> bytes:
