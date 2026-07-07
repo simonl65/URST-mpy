@@ -1,6 +1,6 @@
 [project]
 name = "urst"
-version = "1.0.1"
+version = "1.0.2"
 description = "MicroPython implementation of the Universal Reliable Serial Transport protocol [URST](https://github.com/simonl65/URST-Specification/blob/main/URST-Specification.md)"
 readme = "README.md"
 license = "SUL-1.0"

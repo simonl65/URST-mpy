@@ -7,7 +7,7 @@ import struct
 
 # Pre-computed CONNECT capability payload (fixed protocol constants).
 # Hoisted to avoid re-running struct.pack on every handshake call.
-_CONNECT_PAYLOAD = struct.pack('<BHBBHBB', 4, 8192, 32, 1, 1000, 3, 0)
+_CONNECT_PAYLOAD = struct.pack("<BHBBHBB", 4, 8192, 32, 1, 1000, 3, 0)
 
 # MicroPython compatibility for typing
 try:  # noqa: SIM105
@@ -17,7 +17,7 @@ except ImportError:
     pass
 
 # MicroPython compatibility for time
-import time
+import time  # noqa: E402
 
 try:
     _ = time.ticks_ms  # type: ignore
@@ -32,9 +32,10 @@ except AttributeError:
     time.ticks_ms = ticks_ms  # type: ignore
     time.ticks_diff = ticks_diff  # type: ignore
 
-from collections import deque
-from . import constants
-from .codec_layer import (
+from collections import deque  # noqa: E402
+
+from . import constants  # noqa: E402
+from .codec_layer import (  # noqa: E402
     calculate_crc16,
     cobs_decode,
     cobs_encode,
@@ -64,7 +65,11 @@ _EMPTY_PAYLOAD_TYPES = (
     constants.FRAME_READY,
 )
 _DATA_FRAG_TYPES = (constants.FRAME_DATA, constants.FRAME_FRAG)
-_PAYLOAD_FRAME_TYPES = (constants.FRAME_DATA, constants.FRAME_FRAG, constants.FRAME_CONNECT)
+_PAYLOAD_FRAME_TYPES = (
+    constants.FRAME_DATA,
+    constants.FRAME_FRAG,
+    constants.FRAME_CONNECT,
+)
 
 
 def _is_empty_payload_only_type(frame_type):
@@ -121,7 +126,11 @@ def parse_frame(raw: bytes) -> dict | None:
 
     if frame_type not in _VALID_FRAME_TYPES:
         return None
-    if len(payload) > constants.MAX_PAYLOAD_SIZE and len(payload) != 252 and frame_type == constants.FRAME_DATA:
+    if (
+        len(payload) > constants.MAX_PAYLOAD_SIZE
+        and len(payload) != 252
+        and frame_type == constants.FRAME_DATA
+    ):
         return None
     if _is_empty_payload_only_type(frame_type) and payload:
         return None
@@ -140,7 +149,9 @@ class ProtocolLayer:
         self.expected_recv_seq = 0
         self.last_received_seq = -1
         self.is_connected = False
-        self._recv_queue = deque((), constants.MAX_FRAGMENTS)  # O(1) popleft on MicroPython
+        self._recv_queue = deque(
+            (), constants.MAX_FRAGMENTS
+        )  # O(1) popleft on MicroPython
         logger.debug("Initializing Protocol Layer")
 
     def connect(self) -> bool:
@@ -148,7 +159,9 @@ class ProtocolLayer:
         payload = _CONNECT_PAYLOAD
         for attempt in range(constants.MAX_RETRIES + 1):
             logger.debug(f"Handshake attempt {attempt + 1}")
-            self.codec.write_frame(build_frame(constants.FRAME_CONNECT, 0, payload))
+            self.codec.write_frame(
+                build_frame(constants.FRAME_CONNECT, 0, payload)
+            )
             # Handshake must not use the queue as it needs fresh response
             resp = self.codec.read_frame(constants.ACK_TIMEOUT_MS)
             if resp:
@@ -163,24 +176,36 @@ class ProtocolLayer:
                     logger.debug("URST Connected (received CONNECT_ACK)")
                     return True
                 if p and p["type"] == constants.FRAME_CONNECT:
-                    self.codec.write_frame(build_frame(constants.FRAME_CONNECT_ACK, p["seq"], payload))
+                    self.codec.write_frame(
+                        build_frame(
+                            constants.FRAME_CONNECT_ACK, p["seq"], payload
+                        )
+                    )
                     (
                         self.next_send_seq,
                         self.expected_recv_seq,
                         self.last_received_seq,
                     ) = 0, 0, -1
                     self.is_connected = True
-                    logger.debug("URST Connected (simultaneous CONNECT resolved)")
+                    logger.debug(
+                        "URST Connected (simultaneous CONNECT resolved)"
+                    )
                     return True
                 if p:
-                    logger.warning(f"Unexpected frame during handshake: {p['type']}")
+                    logger.warning(
+                        f"Unexpected frame during handshake: {p['type']}"
+                    )
             else:
                 logger.warning("Handshake timeout")
         return False
 
     def send_reliable(self, frame_type: int, payload: bytes) -> bool:
         """Send a frame reliably using stop-and-wait (§5.1.1)."""
-        if not self.is_connected and frame_type != constants.FRAME_CONNECT and not self.connect():
+        if (
+            not self.is_connected
+            and frame_type != constants.FRAME_CONNECT
+            and not self.connect()
+        ):
             logger.error("Failed to establish connection before sending")
             return False
 
@@ -188,11 +213,16 @@ class ProtocolLayer:
         frame = build_frame(frame_type, seq, payload)
 
         for attempt in range(constants.MAX_RETRIES + 1):
-            logger.debug(f"Sending frame type {frame_type:#x}, seq {seq}, attempt {attempt + 1}")
+            logger.debug(
+                f"Sending frame type {frame_type:#x}, seq {seq}, attempt {attempt + 1}"
+            )
             self.codec.write_frame(frame)
 
             start_wait = time.ticks_ms()  # type: ignore
-            while time.ticks_diff(time.ticks_ms(), start_wait) < constants.ACK_TIMEOUT_MS:  # type: ignore
+            while (
+                time.ticks_diff(time.ticks_ms(), start_wait)
+                < constants.ACK_TIMEOUT_MS
+            ):  # type: ignore
                 # Read fresh frames only, bypassing the queue
                 p = self.receive_frame(timeout_ms=100, use_queue=False)
                 if p:
@@ -201,20 +231,26 @@ class ProtocolLayer:
                         logger.debug(f"Received ACK for seq {seq}")
                         return True
                     if p["type"] == constants.FRAME_NAK and p["seq"] == seq:
-                        logger.warning(f"Received NAK for seq {seq}, retrying...")
+                        logger.warning(
+                            f"Received NAK for seq {seq}, retrying..."
+                        )
                         break
 
                     # If it's a payload frame, it's already been ACKed by receive_frame.
                     # We must queue it so Urst.read() can find it later.
                     if p["type"] in _DATA_FRAG_TYPES:
-                        logger.debug(f"Queuing payload frame type {p['type']} received during wait")
+                        logger.debug(
+                            f"Queuing payload frame type {p['type']} received during wait"
+                        )
                         self._recv_queue.append(p)
             else:
                 logger.warning(f"Timeout waiting for ACK for seq {seq}")
 
         return False
 
-    def receive_frame(self, timeout_ms: int | None = None, use_queue: bool = True) -> dict | None:
+    def receive_frame(
+        self, timeout_ms: int | None = None, use_queue: bool = True
+    ) -> dict | None:
         """Receive a frame and handle ACKs/seq checks (§5.1.2, §5.6.2)."""
         if use_queue and self._recv_queue:
             return self._recv_queue.popleft()
@@ -237,7 +273,9 @@ class ProtocolLayer:
             if ft == constants.FRAME_CONNECT or seq == self.expected_recv_seq:
                 if ft == constants.FRAME_CONNECT:
                     payload = _CONNECT_PAYLOAD
-                    self.codec.write_frame(build_frame(constants.FRAME_CONNECT_ACK, seq, payload))
+                    self.codec.write_frame(
+                        build_frame(constants.FRAME_CONNECT_ACK, seq, payload)
+                    )
                     (
                         self.next_send_seq,
                         self.expected_recv_seq,

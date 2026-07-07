@@ -14,5 +14,5 @@ except ImportError:
 
 from .core_handler import Urst
 
-__version__ = "1.0.0"
+__version__ = "1.0.2"
 __all__ = ["Urst"]

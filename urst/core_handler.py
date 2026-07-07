@@ -129,5 +129,8 @@ class Urst:
                     return msg
 
             # Handle other frame types or continue waiting
-            if frame_type == constants.FRAME_CONNECT or frame_type == constants.FRAME_CONNECT_ACK:
+            if (
+                frame_type == constants.FRAME_CONNECT
+                or frame_type == constants.FRAME_CONNECT_ACK
+            ):
                 continue
