@@ -21,10 +21,6 @@
     [
       "urst/protocol_layer.py",
       "github:simonl65/URST-mpy/urst/protocol_layer.py"
-    ],
-    [
-      "urst/transport_layer.py",
-      "github:simonl65/URST-mpy/urst/transport_layer.py"
     ]
   ]
 }

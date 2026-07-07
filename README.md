@@ -19,13 +19,33 @@
 
 ### For MicroPython Devices
 
-Either
+**Option A — Source install via mip (simplest):**
 
 ```bash
 mpremote mip install github:simonl65/URST-mpy
 ```
 
-or simply copy the `urst/` directory from this repository to the root of your MicroPython device's filesystem.
+**Option B — Pre-compiled .mpy (smallest flash footprint, fastest startup):**
+
+Pre-compiling with `mpy-cross` reduces the package from ~19.7 KB to ~6.4 KB on flash
+and eliminates the parse-and-compile step at boot time.
+
+```bash
+# 1. Install mpy-cross (once)
+pip install mpy-cross
+
+# 2. Clone the repo and build
+git clone https://github.com/simonl65/urst-mpy.git
+cd urst-mpy
+make mpy          # produces dist/urst/*.mpy
+
+# 3. Deploy the compiled files to your device
+mpremote cp -r dist/urst :
+```
+
+**Option C — Copy source directly:**
+
+Copy the `urst/` directory from this repository to the root of your MicroPython device's filesystem.
 
 ### For Desktop Development
 
