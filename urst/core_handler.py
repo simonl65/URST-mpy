@@ -2,7 +2,6 @@ try:
     import logging
 except ImportError:
     from . import logging
-import math
 import sys
 
 # MicroPython compatibility for typing
@@ -75,7 +74,7 @@ class Urst:
                 return len(data)
             return 0
 
-        total_frags = math.ceil(len(data) / max_frag_data)
+        total_frags = (len(data) + max_frag_data - 1) // max_frag_data
         msg_id = self._msg_id
         self._msg_id = (self._msg_id + 1) & 0xFF
 
