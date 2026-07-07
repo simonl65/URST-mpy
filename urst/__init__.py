@@ -1,32 +1,18 @@
 try:
     import logging
 except ImportError:
-    # Minimal fallback for MicroPython if logging is not installed
-    class MockLogger:
-        def debug(self, *args, **kwargs):
-            pass
+    # Minimal MicroPython fallback: swallow all log calls via __getattr__.
+    class _NoLog:
+        def __getattr__(self, _):
+            return lambda *a, **k: None
 
-        def info(self, *args, **kwargs):
-            pass
+    class _NoLogging:
+        def getLogger(self, _):
+            return _NoLog()
 
-        def warning(self, *args, **kwargs):
-            pass
-
-        def error(self, *args, **kwargs):
-            pass
-
-    class MockLogging:
-        def getLogger(self, name):
-            return MockLogger()
-
-        def basicConfig(self, *args, **kwargs):
-            pass
-
-    logging = MockLogging()
+    logging = _NoLogging()
 
 from .core_handler import Urst
 
 __version__ = "1.0.0"
 __all__ = ["Urst"]
-
-logger = logging.getLogger(__name__)
