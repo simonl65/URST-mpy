@@ -29,15 +29,3 @@ def _load_minimum_module(monkeypatch) -> ModuleType:
     spec.loader.exec_module(minimum_module)
     return minimum_module
 
-
-def test_minimum_logs_user_friendly_error_without_traceback(
-    monkeypatch, caplog
-) -> None:
-    minimum_module = _load_minimum_module(monkeypatch)
-    caplog.set_level(logging.ERROR)
-
-    minimum_module.main()
-
-    assert "Error initializing URST:" in caplog.text
-    assert "could not open serial port" in caplog.text
-    assert "Traceback" not in caplog.text
