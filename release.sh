@@ -30,7 +30,8 @@ uv run ruff check .
 uv run pytest
 rm -rf release-dist
 uv build --out-dir release-dist
-[[ "$(find release-dist -maxdepth 1 -type f | wc -l)" -eq 2 ]] || abort "expected one wheel and one sdist"
+[[ "$(find release-dist -maxdepth 1 -type f -name '*.whl' | wc -l)" -eq 1 ]] || abort "expected one wheel"
+[[ "$(find release-dist -maxdepth 1 -type f \( -name '*.tar.gz' -o -name '*.zip' \) | wc -l)" -eq 1 ]] || abort "expected one sdist"
 if [[ "$no_publish" == true ]]; then echo "Release gate passed; nothing was published, tagged, pushed, or released."; exit 0; fi
 command -v gh >/dev/null 2>&1 || abort "gh is required before publishing"
 uv publish release-dist/*
