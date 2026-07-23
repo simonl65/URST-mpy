@@ -3,6 +3,19 @@ try:
 except ImportError:
     from . import logging
 
+try:
+    import micropython
+except ImportError:
+    # CPython shim — decorators are no-ops on desktop
+    class _MpShim:
+        @staticmethod
+        def native(fn):
+            return fn
+        @staticmethod
+        def viper(fn):
+            return fn
+    micropython = _MpShim()  # type: ignore
+
 # MicroPython compatibility for typing
 try:
     from typing import Any
@@ -29,6 +42,7 @@ except AttributeError:
 logger = logging.getLogger(__name__)
 
 
+@micropython.native
 def calculate_crc16(data: bytes | bytearray) -> int:
     """
     Calculate the CRC16/CCITT-FALSE for the given data.
@@ -48,6 +62,7 @@ def serialize_crc(crc):
     return bytes([crc & 0xFF, (crc >> 8) & 0xFF])
 
 
+@micropython.native
 def cobs_encode(data: bytes | bytearray) -> bytes:
     """
     Encode data using Consistent Overhead Byte Stuffing (COBS).
@@ -78,6 +93,7 @@ def cobs_encode(data: bytes | bytearray) -> bytes:
     return bytes(output)
 
 
+@micropython.native
 def cobs_decode(data: bytes | bytearray) -> bytes | None:
     """
     Decode COBS-encoded data.
