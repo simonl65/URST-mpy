@@ -196,8 +196,8 @@ wheels = [
 ]
 
 [[package]]
-name = "urst"
-version = "1.0.1"
+name = "urst-mpy"
+version = "1.0.2"
 source = { editable = "." }
 dependencies = [
     { name = "pyserial" },
