@@ -42,18 +42,35 @@ except AttributeError:
 logger = logging.getLogger(__name__)
 
 
+# CRC16/CCITT-FALSE lookup table — built once at import time.
+# Poly: 0x1021, Init: 0xFFFF, no final XOR, MSB-first.
+# Replaces the inner range(8) bit-loop with a single table lookup per byte.
+def _build_crc16_table():
+    table = bytearray(512)  # 256 × 2-byte entries, stored big-endian pairs
+    for i in range(256):
+        crc = i << 8
+        for _ in range(8):
+            crc = (crc << 1 ^ 0x1021) & 0xFFFF if crc & 0x8000 else (crc << 1) & 0xFFFF
+        table[i * 2]     = (crc >> 8) & 0xFF
+        table[i * 2 + 1] = crc & 0xFF
+    return bytes(table)
+
+_CRC16_TABLE = _build_crc16_table()
+
+
 @micropython.native
 def calculate_crc16(data: bytes | bytearray) -> int:
     """
     Calculate the CRC16/CCITT-FALSE for the given data.
 
     Poly: 0x1021, Init: 0xFFFF, No final XOR, MSB-first.
+    Uses a 256-entry lookup table to eliminate the inner bit-loop.
     """
+    tbl = _CRC16_TABLE
     crc = 0xFFFF
     for byte in data:
-        crc ^= byte << 8
-        for _ in range(8):
-            crc = (crc << 1 ^ 4129) & 65535 if crc & 32768 else crc << 1 & 65535
+        idx = ((crc >> 8) ^ byte) & 0xFF
+        crc = ((crc << 8) ^ (tbl[idx * 2] << 8) ^ tbl[idx * 2 + 1]) & 0xFFFF
     return crc
 
 
@@ -97,15 +114,21 @@ def cobs_encode(data: bytes | bytearray) -> bytes:
 def cobs_decode(data: bytes | bytearray) -> bytes | None:
     """
     Decode COBS-encoded data.
+
+    Uses a pre-allocated output buffer (worst case == input length) to avoid
+    per-block heap allocations from bytearray.extend() slices.
     """
-    if len(data) == 0:
+    size = len(data)
+    if size == 0:
         return None
     if 0x00 in data:
         return None
 
-    output = bytearray()
+    # Worst-case decoded length equals input length (no overhead bytes removed
+    # could exceed the input size).
+    output = bytearray(size)
+    write = 0
     index = 0
-    size = len(data)
 
     while index < size:
         code = data[index]
@@ -117,13 +140,17 @@ def cobs_decode(data: bytes | bytearray) -> bytes | None:
         if end > size:
             return None
 
-        output.extend(data[index:end])
+        # Copy the block bytes directly into the pre-allocated buffer.
+        block_len = end - index
+        output[write : write + block_len] = data[index:end]
+        write += block_len
         index = end
 
         if code < 0xFF and index < size:
-            output.append(0x00)
+            output[write] = 0x00
+            write += 1
 
-    return bytes(output)
+    return bytes(output[:write])
 
 
 class CodecLayer:
