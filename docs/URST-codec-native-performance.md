@@ -241,5 +241,17 @@ The 512-byte `_CRC16_TABLE` is a permanent resident. On the RP2040 with ~200 KB 
 | -------- | ------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------- |
 | 1        | Rewrite `cobs_decode` with `@micropython.viper` + `ptr8` byte-by-byte copy loop             | Eliminates the per-block slice allocation entirely; should yield 2–4× over current |
 | 2        | Rewrite `cobs_encode` with `@micropython.viper` + pre-allocated `bytearray` + `ptr8` writes | Removes `bytearray.append()` overhead; estimated 2–3× over current `@native`       |
-| 3        | Investigate storing `_CRC16_TABLE` in flash (`micropython.const` or frozen module)          | Recovers 512 B of heap with no performance cost on cached-flash ports              |
+| 3        | Investigate storing `_CRC16_TABLE` in flash (`micropython.const` or frozen module)          | Recovers 512 B of heap with no performance cost on cached-flash ports — **investigated and closed; see note below** |
 | 4        | Re-run 8 KB benchmark after any RAM reduction to confirm heap headroom                      |
+
+> **Note on recommendation 3 — flash placement of `_CRC16_TABLE` (investigated 2026-07-23):**
+>
+> This was investigated against the live device and is **not practically achievable on stock Pico W firmware without a custom firmware build.**
+>
+> - `micropython.const()` only eliminates name-lookup overhead for **integer** literals at compile time. For a `bytes` object it has no effect on memory placement. On-device verification confirmed that even inline `bytes` literals loaded from a `.py` file on the filesystem land in SRAM (addresses `0x200xxxxx`), not flash (`0x100xxxxx`).
+>
+> - True flash placement requires a **frozen module** — Python source compiled into the firmware binary via `mpy-cross` and the MicroPython build system (`ports/rp2/modules/`). This is not deployable to a running device; it requires building a custom `firmware.uf2`. For 512 bytes the cost-benefit is poor.
+>
+> - `.mpy` precompiled files also load into RAM on the RP2040 in the standard firmware configuration.
+>
+> **Practical mitigation already in place:** `_CRC16_TABLE` is a module-level `bytes` constant, so it is allocated exactly once at import time and never reallocated. The 512 B is a fixed, one-time cost. With ~200 KB heap on the RP2040, this is 0.25% of available heap and the performance gain (6× CRC16 speedup) easily justifies it.
