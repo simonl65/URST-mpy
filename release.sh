@@ -48,7 +48,9 @@ git tag -a "v$version" -m "URST $version"
 git push origin "v$version"
 notes=$(mktemp --suffix=.md /tmp/urst-release-notes.XXXXXX)
 printf '<!-- Write notes for v%s below the separator. -->\n---\n\n' "$version" >"$notes"
-editor=$(printenv EDITOR || echo vi); "$editor" "$notes"
+editor=${VISUAL:-${EDITOR:-vi}}
+read -r -a editor_cmd <<<"$editor"
+"${editor_cmd[@]}" "$notes"
 sed -i '1,/^---$/d' "$notes"
 [[ -n "$(sed '/^[[:space:]]*$/d' "$notes")" ]] || abort "release notes were empty"
 gh release create "v$version" release-dist/* --title "URST v$version" --notes-file "$notes"
