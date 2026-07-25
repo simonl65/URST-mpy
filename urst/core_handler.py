@@ -22,6 +22,13 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _is_serial_like(port):
+    """Return whether *port* provides the byte-stream API URST requires."""
+    return callable(getattr(port, "read", None)) and callable(
+        getattr(port, "write", None)
+    )
+
+
 class Urst:
     """
     Main interface for the Universal Reliable Serial Transport (URST) protocol.
@@ -36,14 +43,14 @@ class Urst:
         if sys.implementation.name == "micropython":
             import machine
 
-            if isinstance(port, machine.UART):
+            if isinstance(port, machine.UART) or _is_serial_like(port):
                 self.ser = port
             else:
                 # port could be id (int)
                 self.ser = machine.UART(port, baudrate=baud)  # type: ignore
         else:
             # Desktop implementation
-            if hasattr(port, "write") and hasattr(port, "read"):
+            if _is_serial_like(port):
                 # Already a serial-like object (e.g. mock or already opened serial)
                 self.ser = port
             else:

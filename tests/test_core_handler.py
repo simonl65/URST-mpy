@@ -39,6 +39,63 @@ def mock_serial_module(monkeypatch):
     monkeypatch.setitem(sys.modules, "serial", SimpleNamespace(Serial=factory))
 
 
+class FakeUart(FakeSerial):
+    init_calls: list[tuple[object, int]] = []
+
+    def __init__(self, port=None, baudrate: int = 57600) -> None:
+        super().__init__()
+        self.port = port
+        self.baudrate = baudrate
+        self.init_calls.append((port, baudrate))
+
+
+@pytest.fixture
+def micropython_runtime(monkeypatch: pytest.MonkeyPatch):
+    FakeUart.init_calls.clear()
+    monkeypatch.setattr(
+        sys, "implementation", SimpleNamespace(name="micropython")
+    )
+    monkeypatch.setitem(
+        sys.modules, "machine", SimpleNamespace(UART=FakeUart)
+    )
+    return FakeUart
+
+
+def test_micropython_accepts_machine_uart(micropython_runtime) -> None:
+    uart = micropython_runtime()
+
+    transport = Urst(uart)
+
+    assert transport.ser is uart
+    assert micropython_runtime.init_calls == [(None, 57600)]
+
+
+def test_micropython_accepts_uart_identifier(micropython_runtime) -> None:
+    transport = Urst(1, baud=115200)
+
+    assert isinstance(transport.ser, micropython_runtime)
+    assert transport.ser.port == 1
+    assert transport.ser.baudrate == 115200
+    assert micropython_runtime.init_calls == [(1, 115200)]
+
+
+def test_micropython_accepts_serial_like_object(micropython_runtime) -> None:
+    port = FakeSerial()
+
+    transport = Urst(port)
+
+    assert transport.ser is port
+    assert micropython_runtime.init_calls == []
+
+
+def test_desktop_accepts_serial_like_object() -> None:
+    port = FakeSerial()
+
+    transport = Urst(port)
+
+    assert transport.ser is port
+
+
 def test_read_valid_frame(monkeypatch: pytest.MonkeyPatch) -> None:
     frame = build_frame(constants.FRAME_DATA, 0, b"Hello")
     fake_serial = FakeSerial(data=frame)

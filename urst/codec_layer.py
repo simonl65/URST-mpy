@@ -11,9 +11,11 @@ except ImportError:
         @staticmethod
         def native(fn):
             return fn
+
         @staticmethod
         def viper(fn):
             return fn
+
     micropython = _MpShim()  # type: ignore
 
 # MicroPython compatibility for typing
@@ -50,10 +52,15 @@ def _build_crc16_table():
     for i in range(256):
         crc = i << 8
         for _ in range(8):
-            crc = (crc << 1 ^ 0x1021) & 0xFFFF if crc & 0x8000 else (crc << 1) & 0xFFFF
-        table[i * 2]     = (crc >> 8) & 0xFF
+            crc = (
+                (crc << 1 ^ 0x1021) & 0xFFFF
+                if crc & 0x8000
+                else (crc << 1) & 0xFFFF
+            )
+        table[i * 2] = (crc >> 8) & 0xFF
         table[i * 2 + 1] = crc & 0xFF
     return bytes(table)
+
 
 _CRC16_TABLE = _build_crc16_table()
 
