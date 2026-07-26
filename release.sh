@@ -51,7 +51,7 @@ printf '<!-- Write notes for v%s below the separator. -->\n---\n\n' "$version" >
 editor=${VISUAL:-${EDITOR:-vi}}
 read -r -a editor_cmd <<<"$editor"
 "${editor_cmd[@]}" "$notes"
-sed -i '1,/^---$/d' "$notes"
+sed -i '1,/^---[[:space:]]*$/d' "$notes"
 [[ -n "$(sed '/^[[:space:]]*$/d' "$notes")" ]] || abort "release notes were empty"
 gh release create "v$version" release-dist/* --title "URST v$version" --notes-file "$notes"
 rm -f "$notes"
