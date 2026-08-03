@@ -155,7 +155,16 @@ class ProtocolLayer:
         logger.debug("Initializing Protocol Layer")
 
     def connect(self) -> bool:
-        """Perform the CONNECT handshake with retries (§5.6)."""
+        """Perform the CONNECT handshake with retries (§5.6).
+
+        Drains any bytes already buffered on the transport first: a new
+        session (e.g. a fresh CLI process against a long-lived relay/PTY)
+        must not inherit frames left over from a previous session -- see
+        URST-mpy#4 and CHANGELOG.md. Only done once, before the first
+        attempt; retries within this same call keep listening normally
+        for the handshake response.
+        """
+        self.codec.discard_buffered()
         payload = _CONNECT_PAYLOAD
         for attempt in range(constants.MAX_RETRIES + 1):
             logger.debug(f"Handshake attempt {attempt + 1}")

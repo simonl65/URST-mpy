@@ -41,6 +41,8 @@ except AttributeError:
     time.ticks_ms = ticks_ms
     time.ticks_diff = ticks_diff
 
+from . import constants  # noqa: E402
+
 logger = logging.getLogger(__name__)
 
 
@@ -169,6 +171,48 @@ class CodecLayer:
         self.ser = ser
         self._rx_buffer = bytearray()
         logger.debug("Initializing Codec Layer")
+
+    def discard_buffered(
+        self,
+        quiet_ms: int = constants.STALE_DRAIN_QUIET_MS,
+        max_wait_ms: int = constants.STALE_DRAIN_MAX_MS,
+    ) -> int:
+        """
+        Discard this codec's reassembly buffer plus anything already
+        waiting on the transport, then keep discarding until `quiet_ms`
+        passes with nothing new arriving (bounded overall by `max_wait_ms`).
+
+        A reconnecting client (e.g. a new CLI process against a
+        long-lived relay/PTY) can otherwise inherit frames left over from
+        a previous session -- see URST-mpy#4. Call this once, before
+        starting a fresh CONNECT handshake, not on every retry within one.
+        """
+        discarded = len(self._rx_buffer)
+        self._rx_buffer = bytearray()
+
+        start = time.ticks_ms()
+        quiet_since = start
+        while time.ticks_diff(time.ticks_ms(), start) < max_wait_ms:
+            if hasattr(self.ser, "in_waiting"):
+                n = self.ser.in_waiting
+            elif hasattr(self.ser, "any"):
+                n = self.ser.any()
+            else:
+                n = 0
+
+            if n:
+                data = self.ser.read(n)
+                if data:
+                    discarded += len(data)
+                quiet_since = time.ticks_ms()
+            elif time.ticks_diff(time.ticks_ms(), quiet_since) >= quiet_ms:
+                break
+            else:
+                time.sleep(0.005)
+
+        if discarded:
+            logger.warning(f"Discarded {discarded} stale byte(s) pre-connect")
+        return discarded
 
     def write_frame(self, frame: bytes) -> int:
         """

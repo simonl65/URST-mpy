@@ -12,6 +12,8 @@ RX_BUFFER_SIZE          = const(512)    # Receive buffer size in bytes
 MAX_MSG_BYTES           = const(8192)   # Maximum message bytes advertised
 MAX_FRAGMENTS           = const(32)     # Maximum fragments per message
 CONSECUTIVE_COBS_FAILS  = const(5)      # Consecutive COBS fails threshold
+STALE_DRAIN_QUIET_MS    = const(50)     # Quiet gap that ends a pre-connect drain
+STALE_DRAIN_MAX_MS      = const(250)    # Upper bound on a pre-connect drain
 
 # Frame Types
 FRAME_DATA          = const(0x01)  # Application data frame

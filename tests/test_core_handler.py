@@ -5,8 +5,9 @@ from types import SimpleNamespace
 
 import pytest
 from urst import constants
+from urst.codec_layer import CodecLayer
 from urst.core_handler import Urst
-from urst.protocol_layer import build_frame
+from urst.protocol_layer import ProtocolLayer, build_frame
 
 
 class FakeSerial:
@@ -14,7 +15,6 @@ class FakeSerial:
         self.data = data
         self.write_calls: list[bytes] = []
         self.read_index = 0
-        self.in_waiting = 0
 
     def write(self, data: bytes) -> int:
         self.write_calls.append(data)
@@ -23,12 +23,23 @@ class FakeSerial:
     def flush(self) -> None:
         pass
 
+    @property
+    def in_waiting(self) -> int:
+        # Reflects genuinely unread bytes, like a real serial port's
+        # buffer -- needed so drain/discard logic has something real to
+        # observe instead of a fixed stub value.
+        return max(0, len(self.data) - self.read_index)
+
     def read(self, size: int = 1) -> bytes:
         if self.read_index >= len(self.data):
             return b""
         res = self.data[self.read_index : self.read_index + size]
         self.read_index += size
         return res
+
+    def append(self, data: bytes) -> None:
+        """Simulate more bytes arriving on the wire after construction."""
+        self.data += data
 
 
 @pytest.fixture
@@ -55,9 +66,7 @@ def micropython_runtime(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(
         sys, "implementation", SimpleNamespace(name="micropython")
     )
-    monkeypatch.setitem(
-        sys.modules, "machine", SimpleNamespace(UART=FakeUart)
-    )
+    monkeypatch.setitem(sys.modules, "machine", SimpleNamespace(UART=FakeUart))
     return FakeUart
 
 
@@ -142,3 +151,73 @@ def test_send_under_max_payload(monkeypatch: pytest.MonkeyPatch) -> None:
 
     assert sent == len(data)
     assert len(fake_serial.write_calls) > 0
+
+
+# ---------------------------------------------------------------------------
+# Stale-frame drain before CONNECT (relay/PTY reconnect scenario)
+# ---------------------------------------------------------------------------
+#
+# A long-lived relay (e.g. a gateway exposing the physical link as a PTY)
+# can hand a brand-new client session bytes left over from a previous one
+# -- a response the earlier client never read, or a device retransmit that
+# outlived it. Before this fix, ProtocolLayer.connect() read whatever was
+# first on the wire with no regard for whether it predated this session,
+# so a stale response frame could survive the handshake and later be
+# mistaken for the answer to an unrelated request.
+
+
+def test_discard_buffered_drops_pending_bytes_and_reassembly_state() -> None:
+    fake_serial = FakeSerial(data=b"stale garbage bytes")
+    codec = CodecLayer(fake_serial)
+    codec._rx_buffer = bytearray(b"leftover-partial-frame")
+
+    discarded = codec.discard_buffered(quiet_ms=1, max_wait_ms=20)
+
+    assert discarded == len(b"leftover-partial-frame") + len(
+        b"stale garbage bytes"
+    )
+    assert codec._rx_buffer == bytearray()
+    assert fake_serial.read_index == len(fake_serial.data)
+
+
+class RespondingFakeSerial(FakeSerial):
+    """FakeSerial whose CONNECT_ACK response only appears on the wire once
+    a CONNECT frame is actually written -- so pre-loaded stale bytes and
+    the genuine handshake response aren't indistinguishable to a drain
+    that just reads whatever is already waiting."""
+
+    def __init__(self, stale: bytes, response: bytes) -> None:
+        super().__init__(data=stale)
+        self._response = response
+        self._responded = False
+
+    def write(self, data: bytes) -> int:
+        super().write(data)
+        if not self._responded and constants.FRAME_CONNECT in data:
+            self.append(self._response)
+            self._responded = True
+        return len(data)
+
+
+def test_connect_discards_a_stale_response_frame_from_a_previous_session() -> (
+    None
+):
+    stale_pong = build_frame(constants.FRAME_DATA, 1, b"PONG")
+    connect_ack = build_frame(constants.FRAME_CONNECT_ACK, 0, b"")
+    fake_serial = RespondingFakeSerial(stale=stale_pong, response=connect_ack)
+
+    protocol = ProtocolLayer(CodecLayer(fake_serial))
+
+    assert protocol.connect() is True
+    # The stale frame must not have been queued as if it were a payload
+    # belonging to this session.
+    assert not protocol._recv_queue
+
+
+def test_connect_drain_does_not_break_a_clean_handshake() -> None:
+    connect_ack = build_frame(constants.FRAME_CONNECT_ACK, 0, b"")
+    fake_serial = RespondingFakeSerial(stale=b"", response=connect_ack)
+
+    protocol = ProtocolLayer(CodecLayer(fake_serial))
+
+    assert protocol.connect() is True
