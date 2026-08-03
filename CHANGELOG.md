@@ -6,6 +6,10 @@ correspond to PyPI releases of `urst-mpy` (see `release.sh`).
 
 ## Unreleased
 
+### Removed
+
+- Stale package-level variable `__version__` from `urst/__init__.py` and its corresponding sanity test from `tests/sanity_tests.py` since the package version is managed via `pyproject.toml` and `package.json`.
+
 ### Fixed
 
 - **Stale response frames from a previous session could be misdelivered as

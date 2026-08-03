@@ -15,5 +15,5 @@ except ImportError:
 from .codec_layer import cobs_decode, cobs_encode
 from .core_handler import Urst
 
-__version__ = "1.0.2"
 __all__ = ["Urst", "cobs_decode", "cobs_encode"]
+
