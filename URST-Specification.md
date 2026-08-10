@@ -713,10 +713,21 @@ CONNECT payload structure:
 - Both sides MUST reset sequence numbers to 0 upon successful CONNECT/CONNECT_ACK exchange.
 - Upon CONNECT, both sides MUST clear reassembly buffers and reset fragment state for all Message IDs, and MUST discard any pending expected Request ID (see §5.8) — a request/response exchange cannot span a CONNECT.
 - Implementations MUST send CONNECT on startup; if a peer does not respond within ACK_TIMEOUT_MS, implementations SHOULD retry CONNECT up to MAX_RETRIES before reporting failure to application.
+- Before sending the first CONNECT frame of a new session, an implementation MUST discard any bytes already waiting on the transport (see §5.6.4). Sequence-number reset alone is not sufficient: a byte-stream transport can hand a fresh session frames a previous session never consumed, and those frames can carry sequence numbers that coincidentally satisfy the freshly-reset expectations.
 
 #### 5.6.3 Capability Query Requirement
 
 - Senders SHOULD query receiver capabilities using CONNECT before sending messages that could exceed default limits (e.g., large fragmented transfers) or when resynchronization is required.
+
+#### 5.6.4 Stale Data on Reconnection
+
+A transport MAY be shared across more than one logical session over its lifetime — for example, a relay process that exposes a persistent physical link (serial or radio) as a virtual port, where each application invocation opens and closes its own short-lived connection to that virtual port while the underlying link and any in-flight frames persist independently. In this arrangement, bytes written by the remote peer after the local application stopped reading (because it already got its answer, or gave up) remain buffered and are still present when a new session begins.
+
+- Before transmitting the first CONNECT frame of a session, an implementation MUST discard any bytes already buffered by the transport (both its own reassembly/read buffer and anything reported as immediately available by the underlying I/O primitive).
+- Implementations SHOULD bound this discard by a short quiet-period (no new bytes arriving for some small interval) rather than a fixed byte count, since the volume of stale data is not predictable, and SHOULD bound the overall time spent discarding so a saturated link cannot indefinitely delay connection establishment.
+- This requirement exists specifically to prevent the following failure mode, observed in a production deployment: a response frame left over from a prior session survives long enough to be accepted during a later, unrelated session's stop-and-wait wait-for-ACK loop (its sequence number happening to match that session's freshly-reset expectation), and is subsequently delivered to the application as if it were the answer to a request it never actually satisfies.
+- This requirement applies once, at the start of a session, not to every CONNECT retry within an already-initiated handshake attempt.
+- Discarding stale buffered bytes (this section) and Request ID correlation (§5.8) address related but distinct failure modes: this section prevents a stale frame from surviving into a _new session's_ handshake/wait loop; §5.8 prevents a stale _complete message_ — one that a bounded discard did not (or could not) fully clear — from being misdelivered as the reply to an unrelated request, including within an already-established session. Neither is a substitute for the other (§5.8.5).
 
 ### 5.7 ERROR, ABORT, BUSY and READY semantics
 
@@ -745,12 +756,13 @@ ERROR payload format (structured):
 - ABORT is used by a sender or receiver to explicitly abort an in-progress fragmented message transfer.
 - ABORT payload format (structured):
 
-  |  Bytes | Description         | Meaning                                    |
-  | -----: | :------------------- | :------------------------------------------ |
-  |      0 | reason_code (uint8)  | 0 = unspecified                              |
-  |      1 | message_id (uint8)   | the fragmented send being aborted (§6.2)     |
+  | Bytes | Description         | Meaning                                  |
+  | ----: | :------------------ | :--------------------------------------- |
+  |     0 | reason_code (uint8) | 0 = unspecified                          |
+  |     1 | message_id (uint8)  | the fragmented send being aborted (§6.2) |
 
   Payload length MUST be 0 (no information given), or 2 (both fields present). A 1-byte payload is invalid and MUST be silently discarded like any other malformed frame. The frame header's Request ID (§3.2.3) identifies which exchange the abort belongs to; `message_id` disambiguates which fragmented send within that exchange/direction, since a single exchange only ever has one fragmented send in flight per direction (see §6.3.2) but ABORT MAY arrive slightly out of step with the receiver's own bookkeeping.
+
 - ABORT frames MAY be acknowledged by an ACK but are not required to be acknowledged.
 - Upon sending or receiving ABORT for Message ID X, both sides MUST discard all fragments and reassembly state for that Message ID.
 - A sender that exhausts MAX_RETRIES while transmitting any fragment of a FRAG send MUST send ABORT for that Message ID before reporting failure to the application layer, on a best-effort basis (the same degraded link that exhausted retries may also prevent the ABORT itself from arriving; §6.3.4's fragment timeout is the backstop for that case).
@@ -767,7 +779,7 @@ ERROR payload format (structured):
 
 #### 5.8.1 Purpose
 
-Stop-and-wait ACK/NAK (§5.1-§5.4) guarantees reliable delivery of individual *frames*. It does not, by itself, guarantee that a complete *message* a receiver assembles is the one it was expecting — nothing in earlier versions of this protocol prevented a stale, fully-formed message left over from a previous exchange (e.g. a duplicate retransmission that arrived after its original recipient stopped listening) from being delivered as if it were the answer to an unrelated, later request. The Request ID field (§3.2.3) closes this gap by letting a side that is awaiting a specific reply distinguish it from anything else that happens to arrive.
+Stop-and-wait ACK/NAK (§5.1-§5.4) guarantees reliable delivery of individual _frames_. It does not, by itself, guarantee that a complete _message_ a receiver assembles is the one it was expecting — nothing in earlier versions of this protocol prevented a stale, fully-formed message left over from a previous exchange (e.g. a duplicate retransmission that arrived after its original recipient stopped listening) from being delivered as if it were the answer to an unrelated, later request. The Request ID field (§3.2.3) closes this gap by letting a side that is awaiting a specific reply distinguish it from anything else that happens to arrive.
 
 This is a Handler-layer concern (§2.2.1): the Protocol Layer's ACK/NAK/sequence-number machinery (§5.1-§5.4) is unaffected and MUST continue to operate purely on Sequence Number, regardless of Request ID.
 
@@ -796,7 +808,7 @@ Because Message ID (§6.2) is a per-sender, per-direction counter unrelated to R
 
 #### 5.8.5 Non-Goals
 
-Request ID correlation is a Handler-layer filter, not a new reliability mechanism: it does not reduce, and is not intended to reduce, the rate of duplicate retransmissions produced by ordinary ARQ operation (§5.3.4) or the transient backlog such duplicates may create in a long-lived transport shared across multiple short-lived sessions. It exists solely to make it impossible for such backlog to be *misdelivered* as if it were a genuine reply. Implementations SHOULD still drain any buffered stale bytes on reconnection (§2.2.4) to bound how much of that harmless backlog accumulates, but MUST NOT rely on draining alone for correctness.
+Request ID correlation is a Handler-layer filter, not a new reliability mechanism: it does not reduce, and is not intended to reduce, the rate of duplicate retransmissions produced by ordinary ARQ operation (§5.3.4) or the transient backlog such duplicates may create in a long-lived transport shared across multiple short-lived sessions. It exists solely to make it impossible for such backlog to be _misdelivered_ as if it were a genuine reply. Implementations SHOULD still drain any buffered stale bytes on reconnection (§2.2.4) to bound how much of that harmless backlog accumulates, but MUST NOT rely on draining alone for correctness.
 
 ---
 
@@ -1212,7 +1224,7 @@ Add optional timestamp field for latency measurement and replay detection.
 
 ### Q6: Is there a connection handshake?
 
-**A:** Yes — CONNECT (0x05) and CONNECT_ACK (0x06) are mandatory and carry capability information. Sequence numbers are reset to 0 upon successful CONNECT.
+**A:** Yes — CONNECT (0x05) and CONNECT_ACK (0x06) are mandatory and carry capability information. Sequence numbers are reset to 0 upon successful CONNECT. If the transport may be shared across sessions (see §5.6.4), any bytes already buffered MUST also be discarded before the first CONNECT of a session is sent — sequence-number reset alone does not prevent a stale frame from a previous session being mistaken for part of the new one.
 
 ### Q7: How do I detect if the other end has disconnected?
 
@@ -1247,14 +1259,15 @@ Add optional timestamp field for latency measurement and replay detection.
 
 ## Appendix D. Change Log
 
-| Version | Date       | Description                                                                                                           |
-| :------ | :--------- | :-------------------------------------------------------------------------------------------------------------------- |
+| Version | Date       | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| :------ | :--------- | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | 0.4.0   | 2026-08-10 | **Breaking:** added Request ID to the frame header (2→3 byte header; protocol_version 4→5), with new §5.8 defining request/response correlation semantics -- closes a gap where a stale, fully-formed message left over from a previous exchange could be misdelivered as the reply to an unrelated later request. Reassembly now keyed by (Request ID, Message ID) (§5.8.4, §6.3.2). Specified ABORT (§5.7.2) payload format and made sending it mandatory on retry exhaustion. Clarified §6.3.4's fragment timeout applies per (Request ID, Message ID) and is required regardless of Request ID/ABORT use. |
-| 0.3.3   | 2025-10-23 | Added CONNECT/CONNECT_ACK handshake, ERROR, ABORT, BUSY, READY frames;                                                |
-|         |            | Made fragment timeout & single Message ID mandatory                                                                   |
-|         |            | Clarified CRC/COBS ordering                                                                                           |
-|         |            | Enforced strict stop-and-wait semantics.                                                                              |
-| 0.3.2   | 2025-10-13 | Added FRAG frame type to mitigate edge case where a DATA frame's content _could_ have been interpreted as a fragment. |
+| 0.3.4   | 2026-08-03 | Added §5.6.4: implementations MUST discard transport-buffered bytes before the first CONNECT of a session, to prevent a stale frame from a previous session (e.g. across a relay/PTY reconnect) being mistaken for part of a new one; clarified Q6 accordingly.                                                                                                                                                                                                                                                                                                                                               |
+| 0.3.3   | 2025-10-23 | Added CONNECT/CONNECT_ACK handshake, ERROR, ABORT, BUSY, READY frames;                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+|         |            | Made fragment timeout & single Message ID mandatory                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+|         |            | Clarified CRC/COBS ordering                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+|         |            | Enforced strict stop-and-wait semantics.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| 0.3.2   | 2025-10-13 | Added FRAG frame type to mitigate edge case where a DATA frame's content _could_ have been interpreted as a fragment.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
 
 ---
 
