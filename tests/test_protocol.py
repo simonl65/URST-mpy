@@ -40,9 +40,11 @@ MAX_FRAG_DATA: int = MAX_PAYLOAD_SIZE - 6  # 194 bytes per spec §6.3.1
 # ---------------------------------------------------------------------------
 
 
-def _raw_logical(frame_type: int, seq: int, payload: bytes = b"") -> bytes:
+def _raw_logical(
+    frame_type: int, seq: int, payload: bytes = b"", request_id: int = 0
+) -> bytes:
     """Reconstruct the logical frame bytes (header + payload)."""
-    return bytes([frame_type, seq]) + payload
+    return bytes([frame_type, seq, request_id]) + payload
 
 
 def _make_physical(frame_type: int, seq: int, payload: bytes = b"") -> bytes:
@@ -103,9 +105,9 @@ class TestFrameBuilding:
         assert len(frame) >= 6
 
     def test_maximum_frame_size(self) -> None:
-        """Max physical frame is 209 bytes (§3.3)."""
+        """Max physical frame is 210 bytes (§3.3)."""
         frame: bytes = build_frame(FRAME_DATA, 0, bytes(MAX_PAYLOAD_SIZE))
-        assert len(frame) <= 209, (
+        assert len(frame) <= 210, (
             f"Physical frame too large: {len(frame)} bytes"
         )
 
@@ -115,7 +117,7 @@ class TestFrameBuilding:
         frame: bytes = build_frame(FRAME_DATA, 1, payload)
         parsed: dict | None = parse_frame(frame)
         assert parsed is not None, "Valid frame must parse successfully"
-        logical: bytes = bytes([FRAME_DATA, 1]) + payload
+        logical: bytes = bytes([FRAME_DATA, 1, 0]) + payload
         expected_crc: int = calculate_crc16(logical)
         interior: bytes = frame[1:-1]
         decoded: bytes | None = cobs_decode(interior)
@@ -561,7 +563,7 @@ class TestFrameEncodingProcess:
         self, frame_type: int, seq: int, payload: bytes
     ) -> bytes:
         """Manually reproduce §3.3 step-by-step."""
-        logical: bytes = bytes([frame_type, seq]) + payload
+        logical: bytes = bytes([frame_type, seq, 0]) + payload
         crc: int = calculate_crc16(logical)
         crc_le: bytes = serialize_crc(crc)
         with_crc: bytes = logical + crc_le
@@ -596,7 +598,7 @@ class TestFrameEncodingProcess:
         decoded: bytes | None = cobs_decode(interior)
         assert decoded is not None
         raw_crc: int = struct.unpack_from("<H", decoded[-2:])[0]
-        logical: bytes = bytes([FRAME_DATA, 0]) + payload
+        logical: bytes = bytes([FRAME_DATA, 0, 0]) + payload
         expected_crc: int = calculate_crc16(logical)
         assert raw_crc == expected_crc, (
             "CRC MUST be calculated over pre-COBS logical frame"
@@ -633,25 +635,25 @@ class TestFrameSizeBoundaries:
     """§3.3 size calculations."""
 
     def test_header_only_frame_size(self) -> None:
-        """Minimum logical frame = 2 bytes (§3.3)."""
+        """Minimum logical frame = 3 bytes (§3.3)."""
         frame: bytes = build_frame(FRAME_ACK, 0)
         interior: bytes = frame[1:-1]
         decoded: bytes | None = cobs_decode(interior)
-        assert len(decoded) == 4, (
-            "Header-only logical frame + CRC must be 4 bytes"
+        assert len(decoded) == 5, (
+            "Header-only logical frame + CRC must be 5 bytes"
         )
 
     def test_max_payload_logical_frame_size(self) -> None:
-        """Maximum logical frame = 202 bytes (§3.3)."""
+        """Maximum logical frame = 203 bytes (§3.3)."""
         frame: bytes = build_frame(FRAME_DATA, 0, bytes(MAX_PAYLOAD_SIZE))
         interior: bytes = frame[1:-1]
         decoded: bytes | None = cobs_decode(interior)
-        assert len(decoded) == 204, "Max logical frame + CRC must be 204 bytes"
+        assert len(decoded) == 205, "Max logical frame + CRC must be 205 bytes"
 
     def test_physical_frame_under_max(self) -> None:
         frame: bytes = build_frame(FRAME_DATA, 0, bytes(MAX_PAYLOAD_SIZE))
-        assert len(frame) <= 209, (
-            f"Physical frame length {len(frame)} exceeds spec max of 209 bytes (§3.3)"
+        assert len(frame) <= 210, (
+            f"Physical frame length {len(frame)} exceeds spec max of 210 bytes (§3.3)"
         )
 
     def test_zero_byte_payload_differs_from_no_payload(self) -> None:

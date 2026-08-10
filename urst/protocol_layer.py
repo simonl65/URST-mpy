@@ -5,10 +5,6 @@ except ImportError:
 
 import struct
 
-# Pre-computed CONNECT capability payload (fixed protocol constants).
-# Hoisted to avoid re-running struct.pack on every handshake call.
-_CONNECT_PAYLOAD = struct.pack("<BHBBHBB", 4, 8192, 32, 1, 1000, 3, 0)
-
 # MicroPython compatibility for typing
 try:  # noqa: SIM105
     from typing import Any
@@ -44,6 +40,12 @@ from .codec_layer import (  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
+# Pre-computed CONNECT capability payload (fixed protocol constants).
+# Hoisted to avoid re-running struct.pack on every handshake call.
+_CONNECT_PAYLOAD = struct.pack(
+    "<BHBBHBB", constants.PROTOCOL_VERSION, 8192, 32, 1, 1000, 3, 0
+)
+
 # Module-level tuples avoid re-allocating set objects on each membership test.
 # Using tuple for MicroPython portability (frozenset availability varies by port).
 _VALID_FRAME_TYPES = (
@@ -76,18 +78,27 @@ def _is_empty_payload_only_type(frame_type):
     return frame_type in _EMPTY_PAYLOAD_TYPES
 
 
-def build_frame(frame_type: int, seq: int, payload: bytes = b"") -> bytes:
+def build_frame(
+    frame_type: int, seq: int, payload: bytes = b"", *, request_id: int = 0
+) -> bytes:
     """
     Build a complete physical frame (delimiter + COBS + delimiter).
 
-    Order: Header (type, seq) -> Payload -> CRC -> COBS -> Delimiters.
+    Order: Header (type, seq, request_id) -> Payload -> CRC -> COBS -> Delimiters.
+
+    `request_id` (§3.2.3, §5.8) correlates a request/response exchange;
+    it is orthogonal to `seq` (frame-level ACK/NAK) and to a FRAG
+    payload's own Message ID (fragmentation-only, §6.2). Callers not
+    doing request/response correlation may leave it at the default 0.
     """
     if frame_type not in _VALID_FRAME_TYPES:
         raise ValueError(f"Unknown frame type: {frame_type}")
     if not 0 <= seq <= 0xFF:
         raise ValueError("Sequence number must be in range 0..255")
+    if not 0 <= request_id <= 0xFF:
+        raise ValueError("Request ID must be in range 0..255")
 
-    logical = bytes([frame_type, seq]) + payload
+    logical = bytes([frame_type, seq, request_id]) + payload
     crc = calculate_crc16(logical)
     with_crc = logical + serialize_crc(crc)
     encoded = cobs_encode(with_crc)
@@ -100,7 +111,8 @@ def parse_frame(raw: bytes) -> dict | None:
     Strips delimiters, COBS-decodes, validates CRC, and parses the header.
 
     Returns:
-        {'type': int, 'seq': int, 'payload': bytes} or None on failure.
+        {'type': int, 'seq': int, 'request_id': int, 'payload': bytes}
+        or None on failure.
     """
     if len(raw) < 3:
         return None
@@ -111,7 +123,7 @@ def parse_frame(raw: bytes) -> dict | None:
 
     encoded = raw[1:-1]
     decoded = cobs_decode(encoded)
-    if decoded is None or len(decoded) < 4:
+    if decoded is None or len(decoded) < 5:
         return None
 
     payload_with_header = decoded[:-2]
@@ -122,7 +134,8 @@ def parse_frame(raw: bytes) -> dict | None:
 
     frame_type = payload_with_header[0]
     seq = payload_with_header[1]
-    payload = payload_with_header[2:]
+    request_id = payload_with_header[2]
+    payload = payload_with_header[3:]
 
     if frame_type not in _VALID_FRAME_TYPES:
         return None
@@ -135,7 +148,12 @@ def parse_frame(raw: bytes) -> dict | None:
     if _is_empty_payload_only_type(frame_type) and payload:
         return None
 
-    return {"type": frame_type, "seq": seq, "payload": payload}
+    return {
+        "type": frame_type,
+        "seq": seq,
+        "request_id": request_id,
+        "payload": payload,
+    }
 
 
 class ProtocolLayer:
@@ -208,8 +226,15 @@ class ProtocolLayer:
                 logger.warning("Handshake timeout")
         return False
 
-    def send_reliable(self, frame_type: int, payload: bytes) -> bool:
-        """Send a frame reliably using stop-and-wait (§5.1.1)."""
+    def send_reliable(
+        self, frame_type: int, payload: bytes, request_id: int = 0
+    ) -> bool:
+        """Send a frame reliably using stop-and-wait (§5.1.1).
+
+        `request_id` (§3.2.3) is carried unchanged across all retries of
+        this frame, matching a fragmented send's requirement to use the
+        same Request ID for every fragment (§5.8.2).
+        """
         if (
             not self.is_connected
             and frame_type != constants.FRAME_CONNECT
@@ -219,7 +244,7 @@ class ProtocolLayer:
             return False
 
         seq = self.next_send_seq
-        frame = build_frame(frame_type, seq, payload)
+        frame = build_frame(frame_type, seq, payload, request_id=request_id)
 
         for attempt in range(constants.MAX_RETRIES + 1):
             logger.debug(
@@ -258,7 +283,9 @@ class ProtocolLayer:
                             )
                             return False
                         seq = self.next_send_seq
-                        frame = build_frame(frame_type, seq, payload)
+                        frame = build_frame(
+                            frame_type, seq, payload, request_id=request_id
+                        )
                         break
 
                     # If it's a payload frame, it's already been ACKed by receive_frame.
@@ -308,14 +335,55 @@ class ProtocolLayer:
                     ) = 0, 0, -1
                     self.is_connected = True
                     return p
-                self.codec.write_frame(build_frame(constants.FRAME_ACK, seq))
+                self.codec.write_frame(
+                    build_frame(
+                        constants.FRAME_ACK, seq, request_id=p["request_id"]
+                    )
+                )
                 self.last_received_seq, self.expected_recv_seq = (
                     seq,
                     (self.expected_recv_seq + 1) & 0xFF,
                 )
                 return p
             if seq == self.last_received_seq:
-                self.codec.write_frame(build_frame(constants.FRAME_ACK, seq))
+                self.codec.write_frame(
+                    build_frame(
+                        constants.FRAME_ACK, seq, request_id=p["request_id"]
+                    )
+                )
                 return None
-            self.codec.write_frame(build_frame(constants.FRAME_NAK, seq))
+            self.codec.write_frame(
+                build_frame(
+                    constants.FRAME_NAK, seq, request_id=p["request_id"]
+                )
+            )
         return p
+
+    def send_abort(
+        self, message_id: int, request_id: int = 0, reason_code: int = 0
+    ) -> None:
+        """Send ABORT for `message_id` (§5.7.2). Not acknowledged; best-effort."""
+        payload = bytes([reason_code, message_id])
+        self.codec.write_frame(
+            build_frame(
+                constants.FRAME_ABORT,
+                self.next_send_seq,
+                payload,
+                request_id=request_id,
+            )
+        )
+
+    def send_error(
+        self, request_id: int, error_code: int, text: str = ""
+    ) -> None:
+        """Send ERROR (§5.7.1), e.g. CAPABILITY_EXCEEDED. Not acknowledged."""
+        text_bytes = text.encode("utf-8")[:249]
+        payload = bytes([error_code, 0, 0, 0, len(text_bytes)]) + text_bytes
+        self.codec.write_frame(
+            build_frame(
+                constants.FRAME_ERROR,
+                self.next_send_seq,
+                payload,
+                request_id=request_id,
+            )
+        )

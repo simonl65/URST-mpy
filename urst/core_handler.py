@@ -12,6 +12,39 @@ except ImportError:
     # Minimal fallback
     pass
 
+# MicroPython compatibility for time. Checked independently per shimmed
+# attribute (not just `ticks_ms`) since protocol_layer's own shim may
+# already have patched some of these onto the shared `time` module by
+# the time this import chain reaches here.
+import time
+
+try:
+    _ = time.ticks_ms  # type: ignore
+except AttributeError:
+
+    def ticks_ms():
+        return int(time.time() * 1000)
+
+    time.ticks_ms = ticks_ms  # type: ignore
+
+try:
+    _ = time.ticks_diff  # type: ignore
+except AttributeError:
+
+    def ticks_diff(later, earlier):
+        return later - earlier
+
+    time.ticks_diff = ticks_diff  # type: ignore
+
+try:
+    _ = time.ticks_add  # type: ignore
+except AttributeError:
+
+    def ticks_add(ticks, delta):
+        return ticks + delta
+
+    time.ticks_add = ticks_add  # type: ignore
+
 from . import constants
 from .codec_layer import CodecLayer
 from .protocol_layer import ProtocolLayer
@@ -68,16 +101,39 @@ class Urst:
         self.codec = CodecLayer(self.ser)
         self.protocol = ProtocolLayer(self.codec)
         self._msg_id = 0
-        self._reassembly: dict[int, Any] = {}
+        # Reassembly state keyed by (request_id, msg_id) -- see §5.8.4. Two
+        # unrelated exchanges whose independently-wrapping Message IDs
+        # happen to collide MUST NOT be reassembled into one message.
+        self._reassembly: dict[tuple[int, int], Any] = {}
+        self._reassembly_deadline: dict[tuple[int, int], int] = {}
+        # Request ID bookkeeping (§5.8).
+        self._next_request_id = 0
+        self._awaiting_request_id: int | None = None
+        self.last_request_id: int | None = None
 
-    def send(self, data: bytes) -> int:
+    def send(self, data: bytes, request_id: int | None = None) -> int:
         """
         Send data over the URST transport with automatic fragmentation and reliability.
+
+        `request_id`: pass the Request ID being replied to when sending a
+        response (§5.8.3). Omit it to start a new request/response
+        exchange -- a fresh Request ID is assigned automatically and
+        `read()` will then only accept a reply carrying that same ID
+        (§5.8.2).
         """
+        new_request = request_id is None
+        if new_request:
+            request_id = self._next_request_id
+            self._next_request_id = (self._next_request_id + 1) & 0xFF
+
         max_frag_data = constants.MAX_PAYLOAD_SIZE - 6  # 194 bytes
 
         if len(data) <= max_frag_data:
-            if self.protocol.send_reliable(constants.FRAME_DATA, data):
+            if self.protocol.send_reliable(
+                constants.FRAME_DATA, data, request_id
+            ):
+                if new_request:
+                    self._awaiting_request_id = request_id
                 return len(data)
             return 0
 
@@ -90,25 +146,70 @@ class Urst:
             # Fragment payload structure (§6.2)
             header = bytes([msg_id, i, total_frags, len(chunk)])
             if not self.protocol.send_reliable(
-                constants.FRAME_FRAG, header + chunk
+                constants.FRAME_FRAG, header + chunk, request_id
             ):
+                # §5.7.2: tell the peer to drop its partial reassembly
+                # rather than leaving it to time out (§6.3.4).
+                self.protocol.send_abort(msg_id, request_id)
                 return i * max_frag_data
 
+        if new_request:
+            self._awaiting_request_id = request_id
         return len(data)
+
+    def _fragment_timeout_ms(self, total_frags: int) -> int:
+        """§6.3.4 required default: total_frags * (MAX_RETRIES+1) * ACK_TIMEOUT_MS."""
+        return (
+            total_frags * (constants.MAX_RETRIES + 1) * constants.ACK_TIMEOUT_MS
+        )
+
+    def _discard_expired_reassembly(self) -> None:
+        now = time.ticks_ms()
+        expired = [
+            key
+            for key, deadline in self._reassembly_deadline.items()
+            if time.ticks_diff(now, deadline) >= 0
+        ]
+        for key in expired:
+            logger.warning(f"Fragment reassembly timed out for {key} (§6.3.4)")
+            del self._reassembly[key]
+            del self._reassembly_deadline[key]
 
     def read(self, bytes_to_read: int = -1) -> bytes:
         """
         Read a complete URST message (reassembled if necessary).
+
+        If a request is currently outstanding (§5.8.2), any complete
+        message whose Request ID doesn't match is discarded rather than
+        delivered -- it cannot be the expected reply.
         """
+        expected = self._awaiting_request_id
+        stale_budget = constants.MAX_FRAGMENTS  # bound worst-case looping
+
         while True:
+            self._discard_expired_reassembly()
+
             frame = self.protocol.receive_frame()
             if not frame:
                 return b""  # Timeout or duplicate frame (already ACKed)
 
             frame_type = frame["type"]
             payload = frame["payload"]
+            request_id = frame["request_id"]
 
             if frame_type == constants.FRAME_DATA:
+                if expected is not None and request_id != expected:
+                    logger.warning(
+                        f"Discarding stale DATA (request_id={request_id}, "
+                        f"expected {expected}) -- §5.8.2"
+                    )
+                    stale_budget -= 1
+                    if stale_budget <= 0:
+                        return b""
+                    continue
+                self.last_request_id = request_id
+                if expected is not None:
+                    self._awaiting_request_id = None
                 return payload
 
             if frame_type == constants.FRAME_FRAG:
@@ -120,20 +221,58 @@ class Urst:
                 total = payload[2]
                 data_len = payload[3]
                 data = payload[4 : 4 + data_len]
+                key = (request_id, msg_id)
 
-                if msg_id not in self._reassembly:
-                    self._reassembly[msg_id] = {"total": total, "fragments": {}}
+                if key not in self._reassembly:
+                    if self._reassembly:
+                        # §6.3.2/§5.8.4: only one concurrent reassembly --
+                        # reject the incoming fragment, addressed to its
+                        # own (rejected) exchange's Request ID.
+                        self.protocol.send_error(
+                            request_id,
+                            constants.ERROR_CAPABILITY_EXCEEDED,
+                        )
+                        continue
+                    self._reassembly[key] = {"total": total, "fragments": {}}
+                    self._reassembly_deadline[key] = time.ticks_add(
+                        time.ticks_ms(), self._fragment_timeout_ms(total)
+                    )
 
-                self._reassembly[msg_id]["fragments"][frag_num] = data
+                self._reassembly[key]["fragments"][frag_num] = data
 
-                if len(self._reassembly[msg_id]["fragments"]) == total:
+                if len(self._reassembly[key]["fragments"]) == total:
                     # Reassemble message
                     msg = b"".join(
-                        self._reassembly[msg_id]["fragments"][j]
+                        self._reassembly[key]["fragments"][j]
                         for j in range(total)
                     )
-                    del self._reassembly[msg_id]
+                    del self._reassembly[key]
+                    del self._reassembly_deadline[key]
+                    if expected is not None and request_id != expected:
+                        logger.warning(
+                            f"Discarding stale reassembled message "
+                            f"(request_id={request_id}, expected {expected}) "
+                            "-- §5.8.2"
+                        )
+                        stale_budget -= 1
+                        if stale_budget <= 0:
+                            return b""
+                        continue
+                    self.last_request_id = request_id
+                    if expected is not None:
+                        self._awaiting_request_id = None
                     return msg
+                continue
+
+            if frame_type == constants.FRAME_ABORT:
+                if len(payload) == 2:
+                    _reason_code, message_id = payload[0], payload[1]
+                    key = (request_id, message_id)
+                    if key in self._reassembly:
+                        logger.warning(f"Peer aborted message {key} (§5.7.2)")
+                        del self._reassembly[key]
+                        del self._reassembly_deadline[key]
+                continue
 
             # Handle other frame types or continue waiting
             if (
