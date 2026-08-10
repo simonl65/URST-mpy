@@ -35,6 +35,10 @@ MAX_FRAGMENTS       = constants.MAX_FRAGMENTS
 MAX_FRAG_DATA: int = MAX_PAYLOAD_SIZE - 6  # 194 bytes per spec §6.3.1
 # fmt: on
 
+# A conformant CONNECT/CONNECT_ACK capability payload (§5.6.1); byte 0 is
+# protocol_version, which peers validate before connecting (§5.6.1.1).
+_CAPS = bytes([constants.PROTOCOL_VERSION, 0, 32, 32, 1, 232, 3, 3, 0])
+
 # ---------------------------------------------------------------------------
 # ── HELPERS ────────────────────────────────────────────────────────────────
 # ---------------------------------------------------------------------------
@@ -781,7 +785,9 @@ class TestNakTriggersResync:
 
     def test_nak_triggers_connect_before_retrying(self) -> None:
         nak = build_frame(FRAME_NAK, 0)
-        connect_ack = build_frame(FRAME_CONNECT_ACK, 0, b"")
+        # Must carry a conformant capability payload: the resync handshake
+        # validates the peer's protocol_version (§5.6.1.1).
+        connect_ack = build_frame(FRAME_CONNECT_ACK, 0, _CAPS)
         ack = build_frame(FRAME_ACK, 0)
 
         codec = _ScriptedCodec([nak, connect_ack, ack])

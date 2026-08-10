@@ -30,6 +30,7 @@ FRAME_READY         = const(0x0A)  # Receiver ready (resume sending)
 FRAME_DELIMITER     = const(0x00)
 
 # ERROR frame error codes (§5.7.1)
-ERROR_CAPABILITY_EXCEEDED = const(0x01)
+ERROR_CAPABILITY_EXCEEDED  = const(0x01)
+ERROR_INCOMPATIBLE_VERSION = const(0x02)
 
 PROTOCOL_VERSION    = const(5)  # bumped 4->5 for the Request ID header field (§5.6.1)

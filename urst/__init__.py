@@ -16,4 +16,3 @@ from .codec_layer import cobs_decode, cobs_encode
 from .core_handler import Urst
 
 __all__ = ["Urst", "cobs_decode", "cobs_encode"]
-

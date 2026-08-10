@@ -9,4 +9,3 @@ def test_urst_is_importable() -> None:
 
 def test_that_we_have_an_instance_of_urst() -> None:
     assert isinstance(urst, object)
-

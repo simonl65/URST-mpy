@@ -9,6 +9,11 @@ from urst.codec_layer import CodecLayer
 from urst.core_handler import Urst
 from urst.protocol_layer import ProtocolLayer, build_frame
 
+# A conformant CONNECT/CONNECT_ACK capability payload (§5.6.1): the first
+# byte is protocol_version, which peers now validate (§5.6.1.1), so
+# handshake fixtures must carry a real one rather than b"".
+CAPS = bytes([constants.PROTOCOL_VERSION, 0, 32, 32, 1, 232, 3, 3, 0])
+
 
 class FakeSerial:
     def __init__(self, data: bytes = b"") -> None:
@@ -203,7 +208,7 @@ def test_connect_discards_a_stale_response_frame_from_a_previous_session() -> (
     None
 ):
     stale_pong = build_frame(constants.FRAME_DATA, 1, b"PONG")
-    connect_ack = build_frame(constants.FRAME_CONNECT_ACK, 0, b"")
+    connect_ack = build_frame(constants.FRAME_CONNECT_ACK, 0, CAPS)
     fake_serial = RespondingFakeSerial(stale=stale_pong, response=connect_ack)
 
     protocol = ProtocolLayer(CodecLayer(fake_serial))
@@ -215,12 +220,103 @@ def test_connect_discards_a_stale_response_frame_from_a_previous_session() -> (
 
 
 def test_connect_drain_does_not_break_a_clean_handshake() -> None:
-    connect_ack = build_frame(constants.FRAME_CONNECT_ACK, 0, b"")
+    connect_ack = build_frame(constants.FRAME_CONNECT_ACK, 0, CAPS)
     fake_serial = RespondingFakeSerial(stale=b"", response=connect_ack)
 
     protocol = ProtocolLayer(CodecLayer(fake_serial))
 
     assert protocol.connect() is True
+
+
+# ---------------------------------------------------------------------------
+# §5.6.1.1 protocol_version validation
+# ---------------------------------------------------------------------------
+#
+# Reproduces the real deployment failure this check exists to catch: a
+# device left on protocol_version 4 (2-byte header) while the host ran
+# version 5 (3-byte header). CRC cannot detect that -- both sides
+# checksum the same byte range and disagree only about how to read it --
+# so the handshake "succeeded" and the fault surfaced as DATA frames that
+# were never ACKed, i.e. indistinguishable from a failing radio link.
+
+
+def test_connect_refuses_a_peer_advertising_a_different_protocol_version() -> (
+    None
+):
+    older_caps = bytes(
+        [constants.PROTOCOL_VERSION - 1, 0, 32, 32, 1, 232, 3, 3, 0]
+    )
+    connect_ack = build_frame(constants.FRAME_CONNECT_ACK, 0, older_caps)
+    fake_serial = RespondingFakeSerial(stale=b"", response=connect_ack)
+
+    protocol = ProtocolLayer(CodecLayer(fake_serial))
+
+    assert protocol.connect() is False
+    assert protocol.is_connected is False
+
+
+def test_connect_refuses_a_peer_sending_no_capability_payload() -> None:
+    # Too short to carry a version: treated as a mismatch, never as an
+    # unversioned legacy peer to be accommodated (§5.6.1.1).
+    connect_ack = build_frame(constants.FRAME_CONNECT_ACK, 0, b"")
+    fake_serial = RespondingFakeSerial(stale=b"", response=connect_ack)
+
+    protocol = ProtocolLayer(CodecLayer(fake_serial))
+
+    assert protocol.connect() is False
+    assert protocol.is_connected is False
+
+
+def test_version_mismatch_fails_fast_without_burning_every_retry() -> None:
+    """A mismatch is permanent; retrying the handshake cannot fix it."""
+    older_caps = bytes(
+        [constants.PROTOCOL_VERSION - 1, 0, 32, 32, 1, 232, 3, 3, 0]
+    )
+    connect_ack = build_frame(constants.FRAME_CONNECT_ACK, 0, older_caps)
+    fake_serial = RespondingFakeSerial(stale=b"", response=connect_ack)
+
+    protocol = ProtocolLayer(CodecLayer(fake_serial))
+
+    assert protocol.connect() is False
+    # Exactly one CONNECT written, not MAX_RETRIES + 1 of them.
+    connects = [
+        c for c in fake_serial.write_calls if constants.FRAME_CONNECT in c
+    ]
+    assert len(connects) == 1
+
+
+def test_incoming_connect_from_mismatched_peer_is_rejected_with_error() -> None:
+    older_caps = bytes(
+        [constants.PROTOCOL_VERSION - 1, 0, 32, 32, 1, 232, 3, 3, 0]
+    )
+    incoming = build_frame(constants.FRAME_CONNECT, 0, older_caps)
+    fake_serial = FakeSerial(data=incoming)
+
+    protocol = ProtocolLayer(CodecLayer(fake_serial))
+    result = protocol.receive_frame(timeout_ms=50)
+
+    assert result is None
+    assert protocol.is_connected is False
+
+    from urst.protocol_layer import parse_frame
+
+    sent = [parse_frame(c) for c in fake_serial.write_calls]
+    # No CONNECT_ACK -- the peer must not be led to believe it connected.
+    assert not any(p and p["type"] == constants.FRAME_CONNECT_ACK for p in sent)
+    errors = [p for p in sent if p and p["type"] == constants.FRAME_ERROR]
+    assert errors, "should report INCOMPATIBLE_VERSION back to the peer"
+    assert errors[0]["payload"][0] == constants.ERROR_INCOMPATIBLE_VERSION
+
+
+def test_matching_version_still_connects_normally() -> None:
+    incoming = build_frame(constants.FRAME_CONNECT, 0, CAPS)
+    fake_serial = FakeSerial(data=incoming)
+
+    protocol = ProtocolLayer(CodecLayer(fake_serial))
+    result = protocol.receive_frame(timeout_ms=50)
+
+    assert result is not None
+    assert protocol.is_connected is True
 
 
 # ---------------------------------------------------------------------------

@@ -2,7 +2,7 @@
 
 ![Status](https://img.shields.io/badge/status-draft-orange)
 
-**Version:** 0.4.0  
+**Version:** 0.4.1  
 **Status:** Draft  
 **Date:** 2026-08-10  
 **Authors:** Simon R. Lincoln  
@@ -702,10 +702,21 @@ CONNECT payload structure:
 |     7 | max_retries (uint8)                      | receiver's preferred max retries         |
 |     8 | reserved                                 |                                          |
 
-`protocol_version` 5 (0.4.0) is the first version with the 3-byte frame header (§3.2) and Request ID correlation (§5.8); it is wire-incompatible with `protocol_version` 4 and earlier. Implementations MUST NOT attempt to interoperate across this boundary — a version-5 peer connecting to a pre-5 peer will fail CRC validation on every frame, since the header layout itself has changed. This is treated as a hard compatibility break, not a negotiated capability.
+`protocol_version` 5 (0.4.0) is the first version with the 3-byte frame header (§3.2) and Request ID correlation (§5.8); it is wire-incompatible with `protocol_version` 4 and earlier. This is a hard compatibility break, not a negotiated capability.
 
 - Implementations MUST set max_concurrent_message_ids to 1 to be conformant.
 - The capability exchange follows the "least capable wins" rule: after CONNECT/CONNECT_ACK, peers MUST use the minimum of the two sides' advertised limits for subsequent operations (e.g., max_fragments = min(local, remote)).
+
+##### 5.6.1.1 Version Compatibility Checking
+
+A peer's `protocol_version` MUST be validated, because **nothing else in the protocol detects a header-layout mismatch.** In particular, the frame CRC does *not*: the CRC is computed over the whole logical frame, and two implementations that disagree about how many bytes the header occupies still checksum the *identical byte range*. Every frame therefore passes CRC on both sides, and only the *interpretation* of the disputed byte differs. Absent an explicit check, a mismatch does not fail cleanly — it presents as a successful CONNECT handshake followed by application traffic that is silently misparsed, which is easily and expensively misdiagnosed as a physical-layer or link-reliability problem.
+
+- On receiving CONNECT or CONNECT_ACK, an implementation MUST compare the peer's advertised `protocol_version` against its own before completing the handshake.
+- If the versions differ, the implementation MUST NOT consider the connection established, MUST NOT deliver any payload from that peer to the application, and SHOULD report the mismatch (including both version numbers) through whatever diagnostic channel it provides.
+- A peer that rejects a CONNECT on version grounds SHOULD respond with an ERROR frame carrying error_code INCOMPATIBLE_VERSION (0x02, see §5.7.1) so the initiator learns *why* rather than only observing a timeout. This is SHOULD rather than MUST because the ERROR frame is itself framed using the local header layout and may therefore be unparseable by the very peer it is aimed at; senders MUST NOT depend on receiving one.
+- A CONNECT or CONNECT_ACK whose capability payload is absent or too short to contain `protocol_version` MUST be treated as a version mismatch, not as an unversioned legacy peer to be accommodated.
+
+**Rationale:** this requirement was added in 0.4.1 after a deployment in which one end was upgraded to `protocol_version` 5 while the other remained on 4. Because CRC could not catch it, the handshake succeeded and DATA frames were merely never acknowledged — a signature indistinguishable from a marginal radio link, and one that consumed substantial debugging effort before the true cause was found.
 
 #### 5.6.2 CONNECT Sequence and Effects
 
@@ -747,9 +758,10 @@ ERROR payload format (structured):
 | 6..(6+text_len-1) | UTF-8 text (human-readable)        |                                    |
 
 - error_code 0x01 = CAPABILITY_EXCEEDED (used when sender attempted to exceed receiver's reassembly/capacity)
+- error_code 0x02 = INCOMPATIBLE_VERSION (used when a peer's advertised `protocol_version` does not match the local one; see §5.6.1.1). The `max_*` fields carry no information for this code and MUST be sent as 0; the human-readable text SHOULD name both versions.
 - Implementations MUST interpret max\_\* fields when non-zero and adjust behavior accordingly.
 - ERROR frames MUST be sent when a receiver rejects a fragment set or other request due to capacity limits.
-- ERROR frames use the same framing and CRC rules as other frames.
+- ERROR frames use the same framing and CRC rules as other frames. Note that an ERROR frame reporting INCOMPATIBLE_VERSION is framed with the *sender's* header layout, which is by definition the layout the recipient disagrees about; such a frame may therefore be unparseable at the far end. It is a best-effort diagnostic, never a reliable signal (§5.6.1.1).
 
 #### 5.7.2 ABORT Frame (0x08)
 
@@ -939,6 +951,7 @@ A conformant URST implementation MUST:
 14. Clear receive buffers on initialization and attempt resynchronization by discarding until the next 0x00 delimiter
 15. Implement Request ID assignment, echo, and reply filtering per Section 5.8
 16. Implement ABORT (0x08) sending on retry exhaustion and ABORT/ERROR handling per Section 5.7
+17. Validate the peer's `protocol_version` on CONNECT/CONNECT_ACK and refuse to establish a connection on mismatch, per Section 5.6.1.1
 
 ### 7.2 Optional Features
 
@@ -976,6 +989,8 @@ The following behaviors are explicitly NON-CONFORMANT:
 - Using big-endian byte order for CRC serialization
 - Fragment interleaving (starting a new Message ID before previous is complete)
 - Accepting more than one concurrent (Request ID, Message ID) reassembly
+- Completing a CONNECT handshake with a peer advertising a different `protocol_version` (§5.6.1.1)
+- Treating a CONNECT/CONNECT_ACK with a missing or truncated capability payload as an acceptable unversioned peer (§5.6.1.1)
 - Delivering a reassembled message to the application while awaiting a specific reply, without checking its Request ID (§5.8.2)
 - Using the FRAG payload's Message ID as a substitute for the frame header's Request ID, or vice versa (§5.8.3)
 
@@ -1130,6 +1145,8 @@ Use this checklist when implementing URST:
 - [ ] Sequence numbers wrap correctly (255 → 0)
 - [ ] Sequence number management implemented
 - [ ] CONNECT capability negotiation implemented, advertising protocol_version 5
+- [ ] Peer's protocol_version validated on CONNECT/CONNECT_ACK; mismatch refuses the connection (§5.6.1.1)
+- [ ] Missing/truncated capability payload treated as a version mismatch, not a legacy peer (§5.6.1.1)
 
 ### A.3 Protocol Layer
 
@@ -1261,6 +1278,7 @@ Add optional timestamp field for latency measurement and replay detection.
 
 | Version | Date       | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | :------ | :--------- | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 0.4.1   | 2026-08-10 | Added §5.6.1.1: peers MUST validate each other's `protocol_version` on CONNECT/CONNECT_ACK and refuse to connect on mismatch, with new ERROR code INCOMPATIBLE_VERSION (0x02). **Corrects a factual error in 0.4.0**, which claimed a version mismatch "will fail CRC validation on every frame" — it does not: both sides checksum the same byte range and disagree only about how to interpret it, so every frame passes CRC and the mismatch surfaces as unacknowledged DATA, indistinguishable from a bad link. Added after exactly that mismatch (v4 device, v5 host) cost significant debugging time in a real deployment. |
 | 0.4.0   | 2026-08-10 | **Breaking:** added Request ID to the frame header (2→3 byte header; protocol_version 4→5), with new §5.8 defining request/response correlation semantics -- closes a gap where a stale, fully-formed message left over from a previous exchange could be misdelivered as the reply to an unrelated later request. Reassembly now keyed by (Request ID, Message ID) (§5.8.4, §6.3.2). Specified ABORT (§5.7.2) payload format and made sending it mandatory on retry exhaustion. Clarified §6.3.4's fragment timeout applies per (Request ID, Message ID) and is required regardless of Request ID/ABORT use. |
 | 0.3.4   | 2026-08-03 | Added §5.6.4: implementations MUST discard transport-buffered bytes before the first CONNECT of a session, to prevent a stale frame from a previous session (e.g. across a relay/PTY reconnect) being mistaken for part of a new one; clarified Q6 accordingly.                                                                                                                                                                                                                                                                                                                                               |
 | 0.3.3   | 2025-10-23 | Added CONNECT/CONNECT_ACK handshake, ERROR, ABORT, BUSY, READY frames;                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |

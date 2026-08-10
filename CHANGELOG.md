@@ -8,6 +8,21 @@ correspond to PyPI releases of `urst-mpy` (see `release.sh`).
 
 ### Added
 
+- **Peers now validate each other's `protocol_version` during the CONNECT handshake and refuse to connect on a mismatch** (spec v0.4.1, new §5.6.1.1), with a new ERROR code `INCOMPATIBLE_VERSION` (0x02) reported back to the peer on a best-effort basis.
+
+  **Nothing else in the protocol could detect a header-layout mismatch.** The CRC cannot: it covers the whole logical frame, and two implementations that disagree about the header length still checksum the *identical byte range*, differing only in how they interpret the disputed byte. Every frame therefore passes CRC on both sides.
+
+  Found the hard way in a live deployment immediately after the 3.0.0 release: the device was still running 2.x (`protocol_version` 4, 2-byte header) while the host CLI ran 3.0.0 (5, 3-byte header). The CONNECT handshake succeeded on the first attempt every time, and the fault surfaced only as DATA frames that were never acknowledged — a signature indistinguishable from a marginal radio link, which is exactly how it was first misdiagnosed. (Root cause of the mismatch itself was a stale default branch; see `release.sh`'s new fast-forward step.)
+
+  Spec v0.4.1 also **corrects a factual error introduced in v0.4.0**, which asserted that a version mismatch "will fail CRC validation on every frame". It does not, as the above demonstrates.
+  - A CONNECT/CONNECT_ACK whose capability payload is missing or too short to carry a version is treated as a mismatch, not as an unversioned legacy peer to accommodate.
+  - `connect()` fails fast on mismatch rather than burning all `MAX_RETRIES` attempts: retrying cannot change the peer's version.
+  - `tests/test_core_handler.py` gains five tests covering both roles (initiator rejecting a mismatched CONNECT_ACK, responder rejecting a mismatched CONNECT with an ERROR and no CONNECT_ACK), the missing-payload case, fail-fast behaviour, and the matching-version happy path.
+
+## [3.0.0] - 2026-08-10
+
+### Added
+
 - **Request ID header field and §5.8 request/response correlation** (spec v0.4.0, `protocol_version` 4→5, **breaking**). Frame header grows from 2 to 3 bytes (`[type][seq][request_id]`). A side awaiting a specific reply now discards any complete message whose Request ID doesn't match, instead of risking delivery of a stale message left over from an earlier exchange as the answer to an unrelated later request -- see `URST-Specification.md` §5.8 for full rationale and the live reproduction that prompted it (`diff-drive-robot`'s `Get Log`, over the same long-lived gateway PTY implicated in the URST-mpy#4 fix below).
   - `build_frame()`/`parse_frame()` gain a `request_id` field; `ProtocolLayer.send_reliable()` takes and echoes it across retries; ACK/NAK now echo it too.
   - `Urst.send(data, request_id=None)`: omit `request_id` to start a new request (a fresh ID is assigned and `read()` will then filter by it); pass it explicitly to reply to a received request (`request_id=urst.last_request_id`), or use the new `Urst.reply(data)` convenience (raises `RuntimeError` if nothing has been read yet).

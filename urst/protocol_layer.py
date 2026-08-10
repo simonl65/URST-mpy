@@ -172,6 +172,39 @@ class ProtocolLayer:
         )  # O(1) popleft on MicroPython
         logger.debug("Initializing Protocol Layer")
 
+    def _peer_version_ok(self, payload: bytes, context: str) -> bool:
+        """Check a CONNECT/CONNECT_ACK capability payload's version (§5.6.1.1).
+
+        Nothing else in the protocol catches a header-layout mismatch: the
+        CRC covers the same byte range whichever layout each side assumes,
+        so every frame passes CRC and only the *interpretation* of byte 2
+        differs. Without this check a mismatch looks like a successful
+        handshake followed by DATA that is never ACKed -- i.e. exactly
+        like a bad link, which is how it was originally misdiagnosed.
+
+        A payload too short to carry a version is a mismatch, not a
+        legacy peer to accommodate: pre-5 peers are wire-incompatible.
+        """
+        if not payload:
+            logger.error(
+                f"{context}: peer sent no capability payload; cannot verify "
+                f"protocol version (local v{constants.PROTOCOL_VERSION}) -- "
+                "refusing connection (§5.6.1.1)"
+            )
+            return False
+        peer_version = payload[0]
+        if peer_version != constants.PROTOCOL_VERSION:
+            logger.error(
+                f"{context}: incompatible URST protocol version -- peer "
+                f"advertises v{peer_version}, local is "
+                f"v{constants.PROTOCOL_VERSION}. The frame header layout "
+                "differs, so CRC cannot detect this; refusing connection "
+                "rather than silently misparsing traffic (§5.6.1.1). "
+                "Upgrade both ends to the same URST version."
+            )
+            return False
+        return True
+
     def connect(self) -> bool:
         """Perform the CONNECT handshake with retries (§5.6).
 
@@ -194,6 +227,12 @@ class ProtocolLayer:
             if resp:
                 p = parse_frame(resp)
                 if p and p["type"] == constants.FRAME_CONNECT_ACK:
+                    if not self._peer_version_ok(
+                        p["payload"], "CONNECT_ACK received"
+                    ):
+                        # Retrying cannot fix a version mismatch, and the
+                        # peer is not going to change its mind: fail now.
+                        return False
                     (
                         self.next_send_seq,
                         self.expected_recv_seq,
@@ -203,6 +242,16 @@ class ProtocolLayer:
                     logger.debug("URST Connected (received CONNECT_ACK)")
                     return True
                 if p and p["type"] == constants.FRAME_CONNECT:
+                    if not self._peer_version_ok(
+                        p["payload"], "simultaneous CONNECT"
+                    ):
+                        self.send_error(
+                            p["request_id"],
+                            constants.ERROR_INCOMPATIBLE_VERSION,
+                            f"protocol v{constants.PROTOCOL_VERSION} != "
+                            f"peer v{p['payload'][0] if p['payload'] else '?'}",
+                        )
+                        return False
                     self.codec.write_frame(
                         build_frame(
                             constants.FRAME_CONNECT_ACK, p["seq"], payload
@@ -324,6 +373,20 @@ class ProtocolLayer:
         if ft in _PAYLOAD_FRAME_TYPES:
             if ft == constants.FRAME_CONNECT or seq == self.expected_recv_seq:
                 if ft == constants.FRAME_CONNECT:
+                    if not self._peer_version_ok(
+                        p["payload"], "CONNECT received"
+                    ):
+                        # Best-effort diagnostic only: this ERROR is framed
+                        # with OUR header layout, which is precisely what
+                        # the peer disagrees about, so it may well be
+                        # unparseable at the far end (§5.6.1.1).
+                        self.send_error(
+                            p["request_id"],
+                            constants.ERROR_INCOMPATIBLE_VERSION,
+                            f"protocol v{constants.PROTOCOL_VERSION} != "
+                            f"peer v{p['payload'][0] if p['payload'] else '?'}",
+                        )
+                        return None
                     payload = _CONNECT_PAYLOAD
                     self.codec.write_frame(
                         build_frame(constants.FRAME_CONNECT_ACK, seq, payload)
