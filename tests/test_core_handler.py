@@ -397,3 +397,38 @@ def test_fragment_reassembly_times_out_and_is_discarded(
     urst.read()
 
     assert (1, 4) not in urst._reassembly
+
+
+def test_reply_echoes_the_request_id_of_the_last_received_message(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    incoming = build_frame(constants.FRAME_DATA, 0, b"CMD", request_id=9)
+    fake_serial = FakeSerial(
+        data=incoming + build_frame(constants.FRAME_ACK, 1)
+    )
+    monkeypatch.setitem(
+        sys.modules, "serial", SimpleNamespace(Serial=lambda **_: fake_serial)
+    )
+    urst = Urst("/dev/null", 57600)
+    urst.protocol.is_connected = True
+    urst.read()
+
+    urst.reply(b"RESP")
+
+    from urst.protocol_layer import parse_frame
+
+    reply_frame = fake_serial.write_calls[
+        -2
+    ]  # last write before reading the ACK
+    parsed = parse_frame(reply_frame)
+    assert parsed is not None
+    assert parsed["request_id"] == 9
+    assert urst._awaiting_request_id is None  # reply(), not a new request
+
+
+def test_reply_without_a_prior_read_raises() -> None:
+    urst = object.__new__(Urst)
+    urst.last_request_id = None
+
+    with pytest.raises(RuntimeError):
+        Urst.reply(urst, b"RESP")

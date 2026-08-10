@@ -10,7 +10,7 @@ correspond to PyPI releases of `urst-mpy` (see `release.sh`).
 
 - **Request ID header field and §5.8 request/response correlation** (spec v0.4.0, `protocol_version` 4→5, **breaking**). Frame header grows from 2 to 3 bytes (`[type][seq][request_id]`). A side awaiting a specific reply now discards any complete message whose Request ID doesn't match, instead of risking delivery of a stale message left over from an earlier exchange as the answer to an unrelated later request -- see `URST-Specification.md` §5.8 for full rationale and the live reproduction that prompted it (`diff-drive-robot`'s `Get Log`, over the same long-lived gateway PTY implicated in the URST-mpy#4 fix below).
   - `build_frame()`/`parse_frame()` gain a `request_id` field; `ProtocolLayer.send_reliable()` takes and echoes it across retries; ACK/NAK now echo it too.
-  - `Urst.send(data, request_id=None)`: omit `request_id` to start a new request (a fresh ID is assigned and `read()` will then filter by it); pass it explicitly to reply to a received request (`request_id=urst.last_request_id`).
+  - `Urst.send(data, request_id=None)`: omit `request_id` to start a new request (a fresh ID is assigned and `read()` will then filter by it); pass it explicitly to reply to a received request (`request_id=urst.last_request_id`), or use the new `Urst.reply(data)` convenience (raises `RuntimeError` if nothing has been read yet).
   - Fragment reassembly is now keyed by `(request_id, msg_id)`, not `msg_id` alone (§5.8.4, §6.3.2) -- the FRAG payload's own `Message ID` remains a separate, fragmentation-only counter, unrelated to Request ID.
   - `tests/test_core_handler.py` covers stale-reply discarding, matching-reply delivery, explicit reply echoing, and the (request_id, msg_id) reassembly keying.
 

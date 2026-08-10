@@ -157,6 +157,21 @@ class Urst:
             self._awaiting_request_id = request_id
         return len(data)
 
+    def reply(self, data: bytes) -> int:
+        """Send `data` as the response to whatever was last delivered by
+        `read()` (§5.8.3): sugar for `send(data, request_id=self.last_request_id)`.
+
+        Raises `RuntimeError` if nothing has been read yet -- there is
+        nothing to reply to, and silently defaulting `request_id` to 0
+        would produce a reply that fails correlation on the requester's
+        side rather than failing loudly here.
+        """
+        if self.last_request_id is None:
+            raise RuntimeError(
+                "reply() called with nothing received yet to reply to"
+            )
+        return self.send(data, request_id=self.last_request_id)
+
     def _fragment_timeout_ms(self, total_frags: int) -> int:
         """§6.3.4 required default: total_frags * (MAX_RETRIES+1) * ACK_TIMEOUT_MS."""
         return (
