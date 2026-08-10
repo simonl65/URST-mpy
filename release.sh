@@ -46,6 +46,16 @@ verify_dir=$(mktemp -d /tmp/urst-release-verification.XXXXXX)
 rm -rf "$verify_dir"
 git tag -a "v$version" -m "URST $version"
 git push origin "v$version"
+# Fast-forward main to the released commit. main is the repo's DEFAULT
+# branch, so it is what `mip install github:simonl65/URST-mpy` fetches --
+# leaving it behind ships stale code to every device that installs URST
+# that way, even though PyPI and the tag are correct. --ff-only rather
+# than a merge commit: main should only ever trail develop, so anything
+# that can't fast-forward means the branches diverged and needs a human.
+git checkout main
+git merge --ff-only develop || abort "main could not fast-forward to develop; resolve manually, then merge and push main before announcing the release"
+git push origin main
+git checkout develop
 notes=$(mktemp --suffix=.md /tmp/urst-release-notes.XXXXXX)
 printf '<!-- Write notes for v%s below the separator. -->\n---\n\n' "$version" >"$notes"
 editor=${VISUAL:-${EDITOR:-vi}}
