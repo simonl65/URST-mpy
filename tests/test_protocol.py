@@ -9,7 +9,7 @@ from urst.codec_layer import (
     cobs_encode,
     serialize_crc,
 )
-from urst.protocol_layer import build_frame, parse_frame
+from urst.protocol_layer import ProtocolLayer, build_frame, parse_frame
 
 # fmt: off
 # Constants for convenience
@@ -744,3 +744,71 @@ class TestMiscellaneous:
         parsed: dict | None = parse_frame(frame)
         assert parsed is not None
         assert parsed["payload"] == payload
+
+
+class _ScriptedCodec:
+    """Fake Codec returning pre-programmed frames in response to writes,
+    for exercising ProtocolLayer.send_reliable()/connect() without real I/O.
+    """
+
+    def __init__(self, responses: list) -> None:
+        self._responses = list(responses)
+        self.written: list = []
+        self.discard_calls = 0
+
+    def write_frame(self, frame: bytes) -> None:
+        self.written.append(frame)
+
+    def read_frame(self, timeout_ms: int):
+        if self._responses:
+            return self._responses.pop(0)
+        return None
+
+    def discard_buffered(self, *args, **kwargs) -> int:
+        self.discard_calls += 1
+        return 0
+
+
+class TestNakTriggersResync:
+    """A NAK means the peer is desynchronized (§5.3.3); URST MUST resolve
+    this via CONNECT re-establishment, not by blindly retransmitting the
+    same frame the peer just rejected (§5.6.2; see also
+    Issues_with_0.3.2.md #1 and #12 for the deadlock/livelock this causes
+    when unaddressed).
+    """
+
+    def test_nak_triggers_connect_before_retrying(self) -> None:
+        nak = build_frame(FRAME_NAK, 0)
+        connect_ack = build_frame(FRAME_CONNECT_ACK, 0, b"")
+        ack = build_frame(FRAME_ACK, 0)
+
+        codec = _ScriptedCodec([nak, connect_ack, ack])
+        protocol = ProtocolLayer(codec)
+        protocol.is_connected = True
+
+        result = protocol.send_reliable(FRAME_DATA, b"payload")
+
+        assert result is True
+        assert protocol.next_send_seq == 1
+        # Original DATA frame, then a CONNECT frame (resync), then the
+        # retried DATA frame -- never a raw retransmit of the NAK'd frame.
+        assert len(codec.written) == 3
+        first = parse_frame(codec.written[0])
+        resync = parse_frame(codec.written[1])
+        retry = parse_frame(codec.written[2])
+        assert first["type"] == FRAME_DATA
+        assert resync["type"] == FRAME_CONNECT
+        assert retry["type"] == FRAME_DATA
+        assert retry["seq"] == 0  # CONNECT resets sequence numbers (§5.6.2)
+
+    def test_nak_resync_gives_up_if_peer_never_reconnects(self) -> None:
+        # Peer NAKs everything, including our CONNECT attempts: no path to
+        # recovery exists, so send_reliable MUST fail rather than loop
+        # forever retransmitting a frame the peer has already rejected.
+        codec = _ScriptedCodec([build_frame(FRAME_NAK, 0)] * 20)
+        protocol = ProtocolLayer(codec)
+        protocol.is_connected = True
+
+        result = protocol.send_reliable(FRAME_DATA, b"payload")
+
+        assert result is False

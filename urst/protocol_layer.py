@@ -240,9 +240,25 @@ class ProtocolLayer:
                         logger.debug(f"Received ACK for seq {seq}")
                         return True
                     if p["type"] == constants.FRAME_NAK and p["seq"] == seq:
+                        # A NAK for the frame we just sent means the peer's
+                        # sequence state disagrees with ours despite strict
+                        # stop-and-wait -- i.e. desynchronization (§5.3.3).
+                        # Retransmitting the identical frame can never
+                        # resolve that; §5.6.2 requires re-establishing the
+                        # connection (which resets both sides' sequence
+                        # numbers) before retrying.
                         logger.warning(
-                            f"Received NAK for seq {seq}, retrying..."
+                            f"Received NAK for seq {seq}: peer is "
+                            "desynchronized, re-establishing connection "
+                            "before retrying (§5.3.3)"
                         )
+                        if not self.connect():
+                            logger.error(
+                                "Failed to re-establish connection after NAK"
+                            )
+                            return False
+                        seq = self.next_send_seq
+                        frame = build_frame(frame_type, seq, payload)
                         break
 
                     # If it's a payload frame, it's already been ACKed by receive_frame.
