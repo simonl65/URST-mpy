@@ -1,6 +1,6 @@
 # fmt: off
 try:
-    from micropython import const
+    from micropython import const  # type: ignore
 except ImportError:
     def const(x): return x  # noqa: E731
 
