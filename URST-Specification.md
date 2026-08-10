@@ -2,9 +2,9 @@
 
 ![Status](https://img.shields.io/badge/status-draft-orange)
 
-**Version:** 0.3.3  
+**Version:** 0.4.0  
 **Status:** Draft  
-**Date:** 2025-10-23  
+**Date:** 2026-08-10  
 **Authors:** Simon R. Lincoln  
 **Copyright:** © 2025 Simon R. Lincoln  
 **License:** Specification is freely implementable; reference code under [Sustainable Use License](LICENSE.md)
@@ -71,6 +71,7 @@ URST implements a four-layer architecture providing reliable delivery over unrel
 - Zero-byte-free encoding for robust frame delimiting
 - Support for large message fragmentation and reassembly
 - Clear connection establishment and capability negotiation for robust operation
+- Request/response correlation, so a stale message from a previous exchange can never be misdelivered as the reply to a new one (§5.8)
 
 **Important:** URST is a strict stop-and-wait protocol. Implementations MUST enforce stop-and-wait semantics: a sender MUST NOT transmit a new DATA or FRAG frame until it has received the ACK/NAK (or an explicit READY when applicable) for the previously transmitted frame.
 
@@ -145,12 +146,12 @@ A complete URST frame consists of the following components:
 ```
 Logical Frame (before COBS encoding):
 
- HEADER (2 bytes)    PAYLOAD (0-200 bytes)    CRC (2 bytes)
-+--------+--------+-------------------------+--------+------+
-| Frame  | Seq    |                         | CRC    | CRC  |
-| Type   | Number |    Application Data     | Low    | High |
-+--------+--------+-------------------------+--------+------+
-  Byte 0   Byte 1        Bytes 2 to N         Byte N+1 Byte N+2
+ HEADER (3 bytes)             PAYLOAD (0-200 bytes)    CRC (2 bytes)
++--------+--------+--------+-------------------------+--------+------+
+| Frame  | Seq    | Req    |                         | CRC    | CRC  |
+| Type   | Number | ID     |    Application Data     | Low    | High |
++--------+--------+--------+-------------------------+--------+------+
+  Byte 0   Byte 1   Byte 2        Bytes 3 to N         Byte N+1 Byte N+2
 
 Physical Frame (after COBS encoding):
 +-------+---------------------------+-------+
@@ -159,15 +160,15 @@ Physical Frame (after COBS encoding):
  Delim        (no 0x00 bytes)        Delim
 ```
 
-**Important:** The sequence number is part of the frame **header**, not the payload. All frame types include both Frame Type and Sequence Number in their 2-byte header unless otherwise specified (some control frames may carry capability payloads but still include the 2-byte header for CRC and addressing).
+**Important:** The sequence number and Request ID are part of the frame **header**, not the payload. All frame types include Frame Type, Sequence Number, and Request ID in their 3-byte header unless otherwise specified (some control frames may carry capability payloads but still include the 3-byte header for CRC and addressing).
 
 ### 3.2 Frame Fields
 
-All URST frames consist of a mandatory 2-byte header, optional payload, and 2-byte CRC:
+All URST frames consist of a mandatory 3-byte header, optional payload, and 2-byte CRC:
 
 ```
-Frame = [Frame Type][Sequence Number][Payload (0-200 bytes)][CRC]
-        └────────── Header ─────────┘
+Frame = [Frame Type][Sequence Number][Request ID][Payload (0-200 bytes)][CRC]
+        └──────────────── Header ────────────────┘
 ```
 
 #### 3.2.1 Frame Type (1 byte)
@@ -212,24 +213,36 @@ The Sequence Number field is an 8-bit counter (0-255) used for:
 - ACK and NAK frames MUST use the sequence number of the frame being acknowledged
 - On connection establishment (CONNECT/CONNECT_ACK) both sides' sequence numbers MUST be reset to 0 (see §5.6)
 
-#### 3.2.3 Payload (0-200 bytes)
+#### 3.2.3 Request ID (1 byte)
+
+The Request ID field is an 8-bit identifier (0-255) used for request/response correlation at the Handler layer (see §5.8). It is distinct from, and unrelated to, the fragmentation `Message ID` carried in FRAG payloads (see §6.2) — the two MUST NOT be conflated.
+
+**Requirements:**
+
+- A side initiating a new request/response exchange MUST assign a fresh Request ID (an 8-bit counter, wrapping 0-255) and use it, unchanged, on every frame belonging to that exchange, including all fragments of a fragmented send.
+- A side sending a response MUST echo the Request ID of the request it is replying to on every frame of that response, including all fragments.
+- ACK and NAK frames MUST echo the Request ID of the frame being acknowledged (in addition to its sequence number).
+- A side not participating in request/response correlation (e.g. fire-and-forget/broadcast use of URST) MAY assign an arbitrary Request ID on send and MUST ignore the field on receive; the field is always present in the header regardless of whether a given implementation uses it for correlation.
+- Request ID assignment is independent of, and MUST NOT reset, the Message ID counter used for fragmentation (§6.2) or the Sequence Number used for frame-level ACK/NAK (§3.2.2).
+
+#### 3.2.4 Payload (0-200 bytes)
 
 The Payload field contains application data or protocol-specific information.
 
 **Requirements:**
 
 - Payload size MUST NOT exceed MAX_PAYLOAD_SIZE (200 bytes)
-- ACK, NAK, BUSY, and READY frames MUST have empty payloads (0 bytes after the 2-byte header)
+- ACK, NAK, BUSY, and READY frames MUST have empty payloads (0 bytes after the 3-byte header)
 - DATA frames MAY have empty payloads (header only)
 - CONNECT/CONNECT_ACK/ERROR/ABORT frames carry structured payloads defined in their sections
 
-#### 3.2.4 CRC (2 bytes)
+#### 3.2.5 CRC (2 bytes)
 
 The CRC field provides error detection for the frame.
 
 **Requirements:**
 
-- CRC MUST be calculated over Frame Type + Sequence Number + Payload (i.e., the full logical frame) BEFORE COBS encoding. The CRC bytes are appended to that logical frame and the combined bytes are then COBS-encoded. This is explicit: CRC is over the pre-COBS logical frame.
+- CRC MUST be calculated over Frame Type + Sequence Number + Request ID + Payload (i.e., the full logical frame) BEFORE COBS encoding. The CRC bytes are appended to that logical frame and the combined bytes are then COBS-encoded. This is explicit: CRC is over the pre-COBS logical frame.
 - CRC MUST use the algorithm specified in Section 3.4
 - CRC MUST be serialized in little-endian byte order
 
@@ -240,7 +253,7 @@ The complete frame encoding process MUST follow these steps:
 1. Construct Logical Frame:
 
    ```
-   logical_frame = [frame_type] + [seq_num] + payload
+   logical_frame = [frame_type] + [seq_num] + [request_id] + payload
    ```
 
 2. Calculate CRC-16/CCITT_FALSE (over that logical_frame):
@@ -271,11 +284,11 @@ The complete frame encoding process MUST follow these steps:
 
 **Frame Size Calculations:**
 
-- Minimum logical frame: 2 bytes (header only, no payload)
-- Maximum logical frame: 202 bytes (header + 200 byte payload)
-- Maximum frame with CRC: 204 bytes
+- Minimum logical frame: 3 bytes (header only, no payload)
+- Maximum logical frame: 203 bytes (header + 200 byte payload)
+- Maximum frame with CRC: 205 bytes
 - Maximum COBS overhead: 3 bytes (1 byte per 254 bytes + 1)
-- Maximum physical frame: 209 bytes (including delimiters)
+- Maximum physical frame: 210 bytes (including delimiters)
 
 ### 3.4 CRC-16/CCITT_FALSE Algorithm Specification
 
@@ -504,7 +517,7 @@ def cobs_decode(data):
 When transmitting a DATA frame, the sender MUST:
 
 1.  Assign a sequence number using the next value in sequence (0-255, wrapping)
-2.  Construct the frame with DATA frame type
+2.  Construct the frame with DATA frame type, carrying the Request ID of the exchange this frame belongs to (see §5.8)
 3.  Encode and transmit the frame
 4.  Start a timeout timer (ACK_TIMEOUT_MS)
 5.  Wait for ACK or NAK response (or READY after BUSY)
@@ -521,9 +534,11 @@ When receiving a DATA frame, the receiver MUST:
 1. Validate COBS encoding (if invalid, silently discard)
 2. Validate CRC (if invalid, silently discard)
 3. Check sequence number:
-   - If seq_num == expected_seq: Send ACK, deliver payload, advance expected_seq
+   - If seq_num == expected_seq: Send ACK, deliver payload to the Protocol Layer, advance expected_seq
    - If seq_num == last_received_seq: Send ACK, discard payload (duplicate)
    - Otherwise: Send NAK, discard payload (out of sequence)
+
+Sequence-number handling and Request ID handling are independent: a frame MUST be ACKed/NAKed based solely on its Sequence Number, regardless of its Request ID. Request ID filtering (§5.8) happens above this layer, at the Handler layer, once a complete message has been delivered from the Protocol Layer.
 
 ### 5.2 Acknowledgment Protocol
 
@@ -537,8 +552,9 @@ An ACK frame MUST be sent when:
 ACK frames MUST:
 
 - Use frame type ACK (0x02)
-- Have an empty payload (0 bytes after the 2-byte header)
+- Have an empty payload (0 bytes after the 3-byte header)
 - Echo the sequence number of the acknowledged DATA frame in byte 1 of the header
+- Echo the Request ID of the acknowledged DATA frame in byte 2 of the header
 
 #### 5.2.2 NAK Frame
 
@@ -549,8 +565,9 @@ A NAK frame MUST be sent when:
 NAK frames MUST:
 
 - Use frame type NAK (0x03)
-- Have an empty payload (0 bytes after the 2-byte header)
+- Have an empty payload (0 bytes after the 3-byte header)
 - Echo the sequence number of the rejected DATA frame in byte 1 of the header
+- Echo the Request ID of the rejected DATA frame in byte 2 of the header
 
 NAK frames MUST NOT be sent for:
 
@@ -677,13 +694,15 @@ CONNECT payload structure:
 
 | Bytes | Description                              | Meaning                                  |
 | ----: | :--------------------------------------- | :--------------------------------------- |
-|     0 | protocol_version (uint8)                 | e.g., 4 for 0.3.4                        |
+|     0 | protocol_version (uint8)                 | e.g., 5 for 0.4.0                        |
 |   1-2 | max_message_bytes (uint16 little-endian) | max bytes receiver can reassemble        |
 |     3 | max_fragments_per_message (uint8)        | max fragments receiver will accept       |
 |     4 | max_concurrent_message_ids (uint8)       | must be 1 for conformant implementations |
 |   5-6 | ack_timeout_ms (uint16 LE)               | receiver's preferred timeout             |
 |     7 | max_retries (uint8)                      | receiver's preferred max retries         |
 |     8 | reserved                                 |                                          |
+
+`protocol_version` 5 (0.4.0) is the first version with the 3-byte frame header (§3.2) and Request ID correlation (§5.8); it is wire-incompatible with `protocol_version` 4 and earlier. Implementations MUST NOT attempt to interoperate across this boundary — a version-5 peer connecting to a pre-5 peer will fail CRC validation on every frame, since the header layout itself has changed. This is treated as a hard compatibility break, not a negotiated capability.
 
 - Implementations MUST set max_concurrent_message_ids to 1 to be conformant.
 - The capability exchange follows the "least capable wins" rule: after CONNECT/CONNECT_ACK, peers MUST use the minimum of the two sides' advertised limits for subsequent operations (e.g., max_fragments = min(local, remote)).
@@ -692,7 +711,7 @@ CONNECT payload structure:
 
 - When a CONNECT is received and accepted, the recipient MUST respond with CONNECT_ACK containing its capabilities.
 - Both sides MUST reset sequence numbers to 0 upon successful CONNECT/CONNECT_ACK exchange.
-- Upon CONNECT, both sides MUST clear reassembly buffers and reset fragment state for all Message IDs.
+- Upon CONNECT, both sides MUST clear reassembly buffers and reset fragment state for all Message IDs, and MUST discard any pending expected Request ID (see §5.8) — a request/response exchange cannot span a CONNECT.
 - Implementations MUST send CONNECT on startup; if a peer does not respond within ACK_TIMEOUT_MS, implementations SHOULD retry CONNECT up to MAX_RETRIES before reporting failure to application.
 
 #### 5.6.3 Capability Query Requirement
@@ -724,9 +743,17 @@ ERROR payload format (structured):
 #### 5.7.2 ABORT Frame (0x08)
 
 - ABORT is used by a sender or receiver to explicitly abort an in-progress fragmented message transfer.
-- ABORT may carry a 1-byte reason code; payload length MUST be 0 or 1.
+- ABORT payload format (structured):
+
+  |  Bytes | Description         | Meaning                                    |
+  | -----: | :------------------- | :------------------------------------------ |
+  |      0 | reason_code (uint8)  | 0 = unspecified                              |
+  |      1 | message_id (uint8)   | the fragmented send being aborted (§6.2)     |
+
+  Payload length MUST be 0 (no information given), or 2 (both fields present). A 1-byte payload is invalid and MUST be silently discarded like any other malformed frame. The frame header's Request ID (§3.2.3) identifies which exchange the abort belongs to; `message_id` disambiguates which fragmented send within that exchange/direction, since a single exchange only ever has one fragmented send in flight per direction (see §6.3.2) but ABORT MAY arrive slightly out of step with the receiver's own bookkeeping.
 - ABORT frames MAY be acknowledged by an ACK but are not required to be acknowledged.
 - Upon sending or receiving ABORT for Message ID X, both sides MUST discard all fragments and reassembly state for that Message ID.
+- A sender that exhausts MAX_RETRIES while transmitting any fragment of a FRAG send MUST send ABORT for that Message ID before reporting failure to the application layer, on a best-effort basis (the same degraded link that exhausted retries may also prevent the ABORT itself from arriving; §6.3.4's fragment timeout is the backstop for that case).
 
 #### 5.7.3 BUSY (0x09) and READY (0x10)
 
@@ -735,6 +762,41 @@ ERROR payload format (structured):
   - The sender SHOULD pause retries for the in-flight frame (implementation choice) and MUST NOT treat BUSY as an ACK.
 - READY indicates the receiver can resume normal reception and processing.
 - BUSY and READY frames have empty payloads and are not acknowledged.
+
+### 5.8 Request ID and Response Correlation
+
+#### 5.8.1 Purpose
+
+Stop-and-wait ACK/NAK (§5.1-§5.4) guarantees reliable delivery of individual *frames*. It does not, by itself, guarantee that a complete *message* a receiver assembles is the one it was expecting — nothing in earlier versions of this protocol prevented a stale, fully-formed message left over from a previous exchange (e.g. a duplicate retransmission that arrived after its original recipient stopped listening) from being delivered as if it were the answer to an unrelated, later request. The Request ID field (§3.2.3) closes this gap by letting a side that is awaiting a specific reply distinguish it from anything else that happens to arrive.
+
+This is a Handler-layer concern (§2.2.1): the Protocol Layer's ACK/NAK/sequence-number machinery (§5.1-§5.4) is unaffected and MUST continue to operate purely on Sequence Number, regardless of Request ID.
+
+#### 5.8.2 Requester Behavior
+
+A side initiating a new request/response exchange MUST:
+
+1. Assign a fresh Request ID before sending the request (an 8-bit counter, wrapping 0-255; MAY reuse the same counter used for other purposes, but MUST NOT reuse the Request ID of an exchange it is still awaiting a reply to).
+2. Use that Request ID, unchanged, on every frame of the request, including all fragments if the request itself is fragmented.
+3. While awaiting the reply, treat any complete message (DATA or reassembled FRAG) whose Request ID does not match as **not the expected reply**: discard it without delivering it to the application, and continue waiting within the remaining ACK_TIMEOUT_MS/retry budget for that read.
+4. A receiver not currently awaiting a specific reply (e.g. idle, listening for a new incoming request) MUST NOT apply this filtering — it MUST accept any well-formed message regardless of Request ID, since it has no expectation to compare against.
+
+#### 5.8.3 Responder Behavior
+
+A side replying to a request MUST:
+
+1. Echo the Request ID of the request it received on every frame of its response, including all fragments.
+2. Assign Request IDs for its own responses independently of the Message ID counter (§6.2) it uses for fragmenting that response — the two are orthogonal identifiers (§3.2.3).
+
+#### 5.8.4 Reassembly Keying
+
+Because Message ID (§6.2) is a per-sender, per-direction counter unrelated to Request ID, and both wrap independently, a stale fragment left over from an earlier exchange MAY coincidentally carry the same Message ID as a fragment belonging to the current exchange. To prevent cross-contamination between unrelated exchanges that happen to reuse the same wrapped Message ID:
+
+- Receivers MUST key fragment reassembly state by the tuple (Request ID, Message ID), not by Message ID alone.
+- The single-concurrent-reassembly limit (§6.3.2, max_concurrent_message_ids=1) applies to this tuple: a fragment whose (Request ID, Message ID) does not match the currently open reassembly, while one is in progress, MUST be rejected per §6.3.2 (send ERROR/CAPABILITY_EXCEEDED), not silently merged into the wrong reassembly.
+
+#### 5.8.5 Non-Goals
+
+Request ID correlation is a Handler-layer filter, not a new reliability mechanism: it does not reduce, and is not intended to reduce, the rate of duplicate retransmissions produced by ordinary ARQ operation (§5.3.4) or the transient backlog such duplicates may create in a long-lived transport shared across multiple short-lived sessions. It exists solely to make it impossible for such backlog to be *misdelivered* as if it were a genuine reply. Implementations SHOULD still drain any buffered stale bytes on reconnection (§2.2.4) to bound how much of that harmless backlog accumulates, but MUST NOT rely on draining alone for correctness.
 
 ---
 
@@ -762,7 +824,7 @@ Fragmented messages use FRAG frames with a specific payload structure:
 
 **Field Descriptions:**
 
-- **Message ID** (1 byte): Unique identifier for the complete message (0-255, wrapping)
+- **Message ID** (1 byte): Unique identifier for the complete message (0-255, wrapping), scoped to fragmentation/reassembly only. This is a separate counter from the frame header's Request ID (§3.2.3) and MUST NOT be used for request/response correlation — see §5.8.4 for how the two combine during reassembly.
 - **Fragment Num** (1 byte): Zero-based index of this fragment (0 to Total-1)
 - **Total Frags** (1 byte): Total number of fragments in the complete message
 - **Data Length** (1 byte): Number of data bytes in this fragment
@@ -792,17 +854,17 @@ When fragmenting a message, the sender MUST:
 When receiving fragments, the receiver MUST:
 
 1. Only accept FRAG frames in the FRAG code path
-2. Extract fragment header fields
-3. Only accept fragments for one Message ID at a time (max_concurrent_message_ids == 1)
-4. If a fragment arrives with a Message ID not equal to the currently open reassembly ID:
-   - If no reassembly in progress, begin reassembly for that Message ID
-   - If reassembly is in progress for a different Message ID, the incoming fragment MUST be rejected; receiver MUST send ERROR with error_code=CAPABILITY_EXCEEDED (0x01) and include max_concurrent_message_ids (1) in ERROR payload
-5. Store fragment in reassembly buffer keyed by Message ID
-6. Track received fragment count per Message ID
+2. Extract fragment header fields and the frame header's Request ID
+3. Only accept fragments for one (Request ID, Message ID) tuple at a time (max_concurrent_message_ids == 1; see §5.8.4)
+4. If a fragment arrives whose (Request ID, Message ID) does not match the currently open reassembly:
+   - If no reassembly in progress, begin reassembly keyed by that (Request ID, Message ID) tuple
+   - If reassembly is in progress for a different (Request ID, Message ID), the incoming fragment MUST be rejected; receiver MUST send ERROR with error_code=CAPABILITY_EXCEEDED (0x01) and include max_concurrent_message_ids (1) in ERROR payload
+5. Store fragment in reassembly buffer keyed by (Request ID, Message ID)
+6. Track received fragment count per (Request ID, Message ID)
 7. When all fragments received (received_count == total_frags):
    - Reassemble message by concatenating fragments in order (0 to total-1)
-   - Deliver complete message to application
-   - Clear reassembly buffer for this Message ID
+   - If the receiver is awaiting a specific reply (§5.8.2), apply Request ID filtering before delivering to the application; otherwise deliver directly
+   - Clear reassembly buffer for this (Request ID, Message ID)
 
 #### 6.3.3 Fragment Ordering
 
@@ -812,9 +874,9 @@ When receiving fragments, the receiver MUST:
 
 #### 6.3.4 Incomplete Message Timeout
 
-Implementations MUST implement a timeout mechanism for incomplete fragmented messages:
+Implementations MUST implement a timeout mechanism for incomplete fragmented messages. This is the backstop for reassembly state that ABORT (§5.7.2) never arrives to clean up (e.g. the sender crashed, or the link degraded enough to lose the ABORT too) — it is required regardless of whether Request ID correlation (§5.8) or ABORT is also in use, since neither prevents a sender from simply vanishing mid-transfer.
 
-- If fragments for a Message ID are not completed within `fragment_timeout`, discard them
+- If fragments for a (Request ID, Message ID) tuple (§5.8.4) are not completed within `fragment_timeout`, discard them
 - Required default timeout calculation:
 
 ```
@@ -857,12 +919,14 @@ A conformant URST implementation MUST:
 11. Handle sequence mismatches per Section 5.3.3
 12. Implement fragmentation and reassembly per Section 6, including:
 
-- Only one concurrent Message ID supported
+- Only one concurrent (Request ID, Message ID) reassembly supported (§5.8.4)
 - Fragments MUST NOT be interleaved
-- Fragment timeout MUST be implemented
+- Fragment timeout MUST be implemented (§6.3.4)
 
 13. Implement CONNECT/CONNECT_ACK capability negotiation on startup and on resynchronization
 14. Clear receive buffers on initialization and attempt resynchronization by discarding until the next 0x00 delimiter
+15. Implement Request ID assignment, echo, and reply filtering per Section 5.8
+16. Implement ABORT (0x08) sending on retry exhaustion and ABORT/ERROR handling per Section 5.7
 
 ### 7.2 Optional Features
 
@@ -899,7 +963,9 @@ The following behaviors are explicitly NON-CONFORMANT:
 - Implementing different CRC algorithms
 - Using big-endian byte order for CRC serialization
 - Fragment interleaving (starting a new Message ID before previous is complete)
-- Accepting more than one concurrent Message ID
+- Accepting more than one concurrent (Request ID, Message ID) reassembly
+- Delivering a reassembled message to the application while awaiting a specific reply, without checking its Request ID (§5.8.2)
+- Using the FRAG payload's Message ID as a substitute for the frame header's Request ID, or vice versa (§5.8.3)
 
 ---
 
@@ -1045,19 +1111,20 @@ Use this checklist when implementing URST:
 
 ### A.2 Transport Layer
 
-- [ ] Frame header is exactly 2 bytes [type][seq]
+- [ ] Frame header is exactly 3 bytes [type][seq][request_id]
 - [ ] Non-reserved frame type values implemented as required
 - [ ] Unknown frame types silently discarded
 - [ ] Frame type 0x00 never used
 - [ ] Sequence numbers wrap correctly (255 → 0)
 - [ ] Sequence number management implemented
-- [ ] CONNECT capability negotiation implemented
+- [ ] CONNECT capability negotiation implemented, advertising protocol_version 5
 
 ### A.3 Protocol Layer
 
 - [ ] ACK frames have empty payload
 - [ ] NAK frames have empty payload
 - [ ] ACK/NAK echo sequence number in header
+- [ ] ACK/NAK echo Request ID in header
 - [ ] CRC failures result in silent discard (no NAK)
 - [ ] COBS failures result in silent discard
 - [ ] Expected sequence number tracked
@@ -1074,11 +1141,16 @@ Use this checklist when implementing URST:
 - [ ] Fragmentation threshold calculated correctly (194 bytes)
 - [ ] Fragment header format: [msg_id][frag_num][total][len]
 - [ ] Each fragment sent with reliable delivery
-- [ ] Fragment reassembly buffer implemented
+- [ ] Fragment reassembly buffer implemented, keyed by (Request ID, Message ID)
 - [ ] Complete message detection works
 - [ ] Fragment timeout implemented (REQUIRED)
 - [ ] Non-fragmented messages detected correctly
-- [ ] Only one concurrent Message ID supported
+- [ ] Only one concurrent (Request ID, Message ID) reassembly supported
+- [ ] Requester assigns a fresh Request ID per exchange and filters replies by it (§5.8.2)
+- [ ] Responder echoes the request's Request ID on every frame of its reply (§5.8.3)
+- [ ] A receiver not awaiting a specific reply accepts any well-formed message regardless of Request ID (§5.8.2)
+- [ ] ABORT sent on retry exhaustion for a FRAG send (§5.7.2)
+- [ ] ABORT received clears reassembly state for the target Message ID (§5.7.2)
 
 ### A.5 Interoperability
 
@@ -1177,6 +1249,7 @@ Add optional timestamp field for latency measurement and replay detection.
 
 | Version | Date       | Description                                                                                                           |
 | :------ | :--------- | :-------------------------------------------------------------------------------------------------------------------- |
+| 0.4.0   | 2026-08-10 | **Breaking:** added Request ID to the frame header (2→3 byte header; protocol_version 4→5), with new §5.8 defining request/response correlation semantics -- closes a gap where a stale, fully-formed message left over from a previous exchange could be misdelivered as the reply to an unrelated later request. Reassembly now keyed by (Request ID, Message ID) (§5.8.4, §6.3.2). Specified ABORT (§5.7.2) payload format and made sending it mandatory on retry exhaustion. Clarified §6.3.4's fragment timeout applies per (Request ID, Message ID) and is required regardless of Request ID/ABORT use. |
 | 0.3.3   | 2025-10-23 | Added CONNECT/CONNECT_ACK handshake, ERROR, ABORT, BUSY, READY frames;                                                |
 |         |            | Made fragment timeout & single Message ID mandatory                                                                   |
 |         |            | Clarified CRC/COBS ordering                                                                                           |
