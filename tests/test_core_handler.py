@@ -528,3 +528,45 @@ def test_reply_without_a_prior_read_raises() -> None:
 
     with pytest.raises(RuntimeError):
         Urst.reply(urst, b"RESP")
+
+
+def test_reassembly_in_progress_reports_a_partial_message(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Callers need to distinguish "nothing came back" from "a fragmented
+    reply is part-way in".
+
+    `read()` is deliberately single-shot: it returns b"" the moment
+    `receive_frame()` times out (after ACK_TIMEOUT_MS) while keeping the
+    partial reassembly for the next call, so §6.3.4's much longer
+    reassembly deadline is only reachable by calling `read()` again. A
+    constrained peer streaming a large response routinely pauses longer
+    than ACK_TIMEOUT_MS between fragments, so a caller that treats the
+    first b"" as failure gives up mid-transfer -- and then retries the
+    whole request, colliding a fresh CONNECT with the still-streaming
+    response.
+    """
+    frag = build_frame(
+        constants.FRAME_FRAG, 0, bytes([7, 0, 2, 1]) + b"A", request_id=1
+    )
+    urst = _make_urst(monkeypatch, data=frag)
+
+    assert urst.reassembly_in_progress is False
+
+    assert urst.read() == b""  # fragment 0 of 2 buffered, then timed out
+    assert urst.reassembly_in_progress is True
+
+
+def test_reassembly_in_progress_clears_once_the_message_completes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    frag_0 = build_frame(
+        constants.FRAME_FRAG, 0, bytes([7, 0, 2, 1]) + b"A", request_id=1
+    )
+    frag_1 = build_frame(
+        constants.FRAME_FRAG, 1, bytes([7, 1, 2, 1]) + b"B", request_id=1
+    )
+    urst = _make_urst(monkeypatch, data=frag_0 + frag_1)
+
+    assert urst.read() == b"AB"
+    assert urst.reassembly_in_progress is False

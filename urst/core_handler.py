@@ -172,6 +172,21 @@ class Urst:
             )
         return self.send(data, request_id=self.last_request_id)
 
+    @property
+    def reassembly_in_progress(self) -> bool:
+        """Whether a fragmented message is part-way reassembled.
+
+        `read()` is single-shot: it returns b"" as soon as a frame read
+        times out (ACK_TIMEOUT_MS) while keeping the partial reassembly
+        for a later call, so §6.3.4's much longer reassembly deadline is
+        only reachable by calling `read()` again. A peer streaming a
+        large response can easily pause longer than ACK_TIMEOUT_MS
+        between fragments, so callers must use this to tell "nothing came
+        back" from "still arriving" instead of treating the first b"" as
+        a failure.
+        """
+        return bool(self._reassembly)
+
     def _fragment_timeout_ms(self, total_frags: int) -> int:
         """§6.3.4 required default: total_frags * (MAX_RETRIES+1) * ACK_TIMEOUT_MS."""
         return (
