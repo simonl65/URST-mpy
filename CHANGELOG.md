@@ -4,7 +4,35 @@ All notable changes to this project are documented here. Format loosely
 follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions
 correspond to PyPI releases of `urst-mpy` (see `release.sh`).
 
-## Unreleased
+## [3.1.1] - 2026-08-12
+
+### Fixed
+
+- **A new session's Request IDs no longer start at a fixed 0, which had left §5.8.2 correlation inert wherever sessions are short-lived.** `Urst.__init__` now seeds `_next_request_id` randomly (`random.getrandbits(8)`, falling back to `time.ticks_ms() & 0xFF` on minimal MicroPython builds that omit `random`).
+
+  3.0.0 added the Request ID field and the rule that a side awaiting a reply discards any complete message whose ID doesn't match. The rule was implemented correctly but could never fire in the deployment it was written for: a one-shot CLI process against a long-lived link starts a fresh `Urst` per invocation, the caller never passes an explicit `request_id`, and the responder only echoes back what it received -- so *every exchange in the whole system carried `request_id` 0*. `read()` compared 0 against 0 and delivered the previous command's leftover reply as the answer to the next one, which is precisely the failure §5.8 exists to prevent, reintroduced by the choice of starting value.
+
+  Observed in `diff-drive-robot`: a `ping` returned `Error: Fragment transfer failed` -- a device-side string that a never-fragmented `PONG` reply cannot produce -- because it received the leftover reply to the preceding `cat ota.log`. The following `ping`, with the backlog drained, succeeded.
+
+  Residual collision probability is 1/256 per session pair, against the previous 1/1. No wire-format change and no `protocol_version` bump: this alters only which values a fresh session picks, which the protocol already permits.
+  - `tests/test_core_handler.py` gains four tests: distinct starting IDs across fresh instances, the single-byte range invariant, wrapping from a high start (now reachable on a second send rather than only after 256), and the no-`random` fallback branch that runs on-device.
+  - `test_send_assigns_a_fresh_request_id_used_on_the_wire` no longer asserts a literal 0; it asserts the ID the instance actually allocated.
+
+  **This does not address the related defect where a CONNECT arriving mid-send resets sequence state underneath an in-flight `send_reliable()`**, which has no CONNECT branch and silently ignores it, then keeps retransmitting the pre-reset `seq` into a session that restarted at 0. That is reproduced but deliberately left unfixed here -- see `TestConnectDuringSend` in `tests/test_protocol.py`, whose second test is `xfail(strict=True)` against the intended behaviour.
+
+## [3.1.0] - 2026-08-11
+
+### Added
+
+- **`Urst.reassembly_in_progress`**, a read-only accessor letting a caller tell "nothing came back" from "still arriving" without reaching into private state.
+
+  `read()` is single-shot: it returns `b""` as soon as a frame read times out (`ACK_TIMEOUT_MS`, 1s by default) while keeping the partial reassembly for a later call. §6.3.4's much longer reassembly deadline — `total_frags * (MAX_RETRIES + 1) * ACK_TIMEOUT_MS` — is therefore only reachable by calling `read()` again, which callers had no way to know they should do.
+
+  A constrained peer streaming a large fragmented response routinely pauses longer than `ACK_TIMEOUT_MS` between fragments; ~1.2s gaps were measured mid-transfer on a Pico W sending a 56-fragment reply over a radio link. A caller treating the first `b""` as failure abandoned the transfer part-way and retried the whole request, colliding a fresh CONNECT with the still-streaming response and desynchronising both ends.
+
+  No behaviour change to `read()` itself, so its single-shot contract and existing timeout test are untouched.
+
+## [3.0.1] - 2026-08-10
 
 ### Added
 

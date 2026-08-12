@@ -349,6 +349,9 @@ def test_send_assigns_a_fresh_request_id_used_on_the_wire(
     )
     urst = Urst("/dev/null", 57600)
     urst.protocol.is_connected = True
+    # The starting ID is randomised per session, so assert against what
+    # this instance actually allocated rather than a literal 0.
+    expected = urst._next_request_id
 
     urst.send(b"CMD")
 
@@ -357,8 +360,8 @@ def test_send_assigns_a_fresh_request_id_used_on_the_wire(
 
     parsed = parse_frame(sent_frame)
     assert parsed is not None
-    assert parsed["request_id"] == 0  # first assigned id
-    assert urst._awaiting_request_id == 0
+    assert parsed["request_id"] == expected  # first assigned id
+    assert urst._awaiting_request_id == expected
 
 
 def test_read_discards_a_stale_reply_and_accepts_the_matching_one(
@@ -570,3 +573,72 @@ def test_reassembly_in_progress_clears_once_the_message_completes(
 
     assert urst.read() == b"AB"
     assert urst.reassembly_in_progress is False
+
+
+def test_fresh_instances_do_not_all_start_at_the_same_request_id(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """§5.8.2 correlation can only reject a stale reply if a new session
+    numbers its requests differently from the previous one.
+
+    A one-shot CLI process that always started at 0 made every exchange in
+    a whole deployment carry `request_id` 0, so the check compared 0
+    against 0 and passed stale replies through as answers. See
+    diff-drive-robot's US-002.
+
+    Sampling 50 instances: an implementation that starts at a fixed value
+    yields exactly one distinct ID, while a random start collides on all
+    50 with probability 256**-49.
+    """
+    starts = {_make_urst(monkeypatch)._next_request_id for _ in range(50)}
+
+    assert len(starts) > 1
+
+
+def test_initial_request_id_is_a_valid_single_byte(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The ID occupies one header byte, so a start outside 0..255 would
+    raise in `build_frame()` on the very first send."""
+    for _ in range(50):
+        assert 0 <= _make_urst(monkeypatch)._next_request_id <= 0xFF
+
+
+def test_request_ids_wrap_from_a_high_start(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Randomising the start makes wrapping reachable on a second send,
+    not just after 256 of them, so it needs covering directly.
+
+    Both sends must be ACKed: an unacknowledged `send()` returns 0 without
+    ever assigning `_awaiting_request_id`, which would make this pass or
+    fail for the wrong reason.
+    """
+    acks = build_frame(constants.FRAME_ACK, 0) + build_frame(
+        constants.FRAME_ACK, 1
+    )
+    urst = _make_urst(monkeypatch, data=acks)
+    urst._next_request_id = 0xFF
+
+    assert urst.send(b"A") == 1
+    first = urst._awaiting_request_id
+    urst._awaiting_request_id = None
+    assert urst.send(b"B") == 1
+
+    assert first == 0xFF
+    assert urst._awaiting_request_id == 0
+
+
+def test_initial_request_id_falls_back_when_random_is_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`random` is optional on minimal MicroPython builds, and that branch
+    is the one that runs on the device -- so it needs covering here rather
+    than being discovered on hardware."""
+    from urst import core_handler
+
+    monkeypatch.setattr(core_handler, "_getrandbits", None)
+
+    ids = {core_handler._initial_request_id() for _ in range(20)}
+
+    assert all(0 <= value <= 0xFF for value in ids)

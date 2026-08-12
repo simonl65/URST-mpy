@@ -820,3 +820,104 @@ class TestNakTriggersResync:
         result = protocol.send_reliable(FRAME_DATA, b"payload")
 
         assert result is False
+
+
+class TestConnectDuringSend:
+    """A CONNECT arriving mid-send resets sequence state underneath the
+    in-flight `send_reliable()`, which never notices (§5.6.2 says CONNECT
+    resets sequence numbers, but says nothing about a message already in
+    flight).
+
+    Reproduces `diff-drive-robot`'s stale-response failures. Each one-shot
+    `otampy` CLI invocation opens a fresh session, so a new CONNECT can
+    arrive while the device is still streaming a fragmented reply to the
+    *previous* command. `receive_frame()` takes the CONNECT branch,
+    answers CONNECT_ACK and zeroes `next_send_seq`/`expected_recv_seq`;
+    control then returns to `send_reliable()`, whose wait loop handles
+    ACK, NAK and DATA/FRAG but has no CONNECT branch, so the frame falls
+    through and is silently ignored. The sender keeps retransmitting its
+    pre-reset `seq` into a session that no longer shares that numbering,
+    and the new peer sees fragments of a message it never asked for.
+    """
+
+    @staticmethod
+    def _mid_stream_sender(monkeypatch, responses):
+        """A ProtocolLayer part-way through sending a fragmented message."""
+        # Keep the ACK wait short: the loop is bounded by wall-clock
+        # ACK_TIMEOUT_MS, and _ScriptedCodec never blocks, so the default
+        # 1000ms would cost (MAX_RETRIES + 1) seconds of real time.
+        monkeypatch.setattr(constants, "ACK_TIMEOUT_MS", 20)
+        codec = _ScriptedCodec(responses)
+        protocol = ProtocolLayer(codec)
+        protocol.is_connected = True
+        protocol.next_send_seq = 5
+        protocol.expected_recv_seq = 5
+        return codec, protocol
+
+    @staticmethod
+    def _fragment() -> bytes:
+        """A FRAG payload: [msg_id, frag_num, total, len] + data (§6.2)."""
+        data = b"x" * 194
+        return bytes([1, 3, 56, len(data)]) + data
+
+    def test_connect_mid_send_resets_seq_state_under_the_sender(
+        self, monkeypatch
+    ) -> None:
+        """Characterises the defect as it stands today.
+
+        This test passes against the current implementation on purpose --
+        it pins the exact mechanism so a fix can be judged against it.
+        """
+        connect = build_frame(FRAME_CONNECT, 0, _CAPS)
+        codec, protocol = self._mid_stream_sender(monkeypatch, [connect])
+
+        result = protocol.send_reliable(FRAME_FRAG, self._fragment())
+
+        assert result is False  # no ACK ever arrives
+
+        written = [parse_frame(frame) for frame in codec.written]
+        assert [frame["type"] for frame in written] == [
+            FRAME_FRAG,  # attempt 1
+            FRAME_CONNECT_ACK,  # the new session is accepted mid-send
+            FRAME_FRAG,  # attempts 2-4, all after the reset
+            FRAME_FRAG,
+            FRAME_FRAG,
+        ]
+
+        # The sender's own sequence state was zeroed while it was still
+        # using it, and it carried on regardless.
+        assert protocol.next_send_seq == 0
+        assert protocol.expected_recv_seq == 0
+        assert protocol.is_connected is True
+
+        # Yet every retransmit still carries the pre-reset seq, which is
+        # meaningless to the peer that just reset the numbering. This is
+        # the desync: seq 5 frames inside a session that restarted at 0.
+        frags = [frame for frame in written if frame["type"] == FRAME_FRAG]
+        assert [frame["seq"] for frame in frags] == [5, 5, 5, 5]
+
+    @pytest.mark.xfail(
+        strict=True,
+        reason="option 3 not implemented: CONNECT must terminate an "
+        "in-flight message rather than being ignored mid-send",
+    )
+    def test_connect_mid_send_should_abandon_the_in_flight_message(
+        self, monkeypatch
+    ) -> None:
+        """The behaviour option 3 needs, asserted API-agnostically.
+
+        Once a peer resets the session, retransmitting the old message is
+        pointless and actively harmful: those frames arrive at the new
+        session as unsolicited fragments. The sender must give up
+        immediately, so exactly one FRAG is written -- the one already
+        sent before the CONNECT arrived.
+        """
+        connect = build_frame(FRAME_CONNECT, 0, _CAPS)
+        codec, protocol = self._mid_stream_sender(monkeypatch, [connect])
+
+        result = protocol.send_reliable(FRAME_FRAG, self._fragment())
+
+        assert result is not True
+        written = [parse_frame(frame) for frame in codec.written]
+        frags = [frame for frame in written if frame["type"] == FRAME_FRAG]
+        assert len(frags) == 1

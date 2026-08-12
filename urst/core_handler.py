@@ -55,11 +55,39 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+try:
+    from random import getrandbits as _getrandbits
+except ImportError:  # minimal MicroPython builds omit `random`
+    _getrandbits = None
+
+
 def _is_serial_like(port):
     """Return whether *port* provides the byte-stream API URST requires."""
     return callable(getattr(port, "read", None)) and callable(
         getattr(port, "write", None)
     )
+
+
+def _initial_request_id() -> int:
+    """Pick a starting Request ID for a new session (§5.8.2).
+
+    Correlation can only reject a stale reply if a new session numbers its
+    requests differently from the one before it. Starting every instance
+    at 0 made that check inert wherever sessions are short-lived: a
+    one-shot CLI process against a long-lived link had every exchange it
+    ever made carry `request_id` 0, so `read()` compared 0 against 0 and
+    delivered the previous command's leftover reply as the answer to the
+    next one -- the exact failure §5.8 exists to prevent, reintroduced by
+    the choice of starting value.
+
+    `random` is optional on minimal MicroPython builds, so fall back to
+    the millisecond clock this module already depends on. Either source
+    suffices: this needs only to differ from the *previous* session on the
+    same link, not to be unguessable.
+    """
+    if _getrandbits is not None:
+        return _getrandbits(8)
+    return time.ticks_ms() & 0xFF  # type: ignore
 
 
 class Urst:
@@ -106,8 +134,10 @@ class Urst:
         # happen to collide MUST NOT be reassembled into one message.
         self._reassembly: dict[tuple[int, int], Any] = {}
         self._reassembly_deadline: dict[tuple[int, int], int] = {}
-        # Request ID bookkeeping (§5.8).
-        self._next_request_id = 0
+        # Request ID bookkeeping (§5.8). The starting value is randomised
+        # so a fresh session cannot mistake the previous one's leftover
+        # reply for its own -- see `_initial_request_id()`.
+        self._next_request_id = _initial_request_id()
         self._awaiting_request_id: int | None = None
         self.last_request_id: int | None = None
 
