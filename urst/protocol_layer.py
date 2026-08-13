@@ -170,6 +170,12 @@ class ProtocolLayer:
         self._recv_queue = deque(
             (), constants.MAX_FRAGMENTS
         )  # O(1) popleft on MicroPython
+        # Set by send_reliable() when a CONNECT from the peer abandons the
+        # in-flight send (§5.6.2 extension, pending spec text). Distinct
+        # from a plain False return so core_handler.send() knows not to
+        # send ABORT for a message the peer never asked about (§5.7.2 --
+        # ABORT belongs to a session that no longer exists).
+        self.session_reset_during_send = False
         logger.debug("Initializing Protocol Layer")
 
     def _peer_version_ok(self, payload: bytes, context: str) -> bool:
@@ -292,6 +298,7 @@ class ProtocolLayer:
             logger.error("Failed to establish connection before sending")
             return False
 
+        self.session_reset_during_send = False
         seq = self.next_send_seq
         frame = build_frame(frame_type, seq, payload, request_id=request_id)
 
@@ -336,6 +343,25 @@ class ProtocolLayer:
                             frame_type, seq, payload, request_id=request_id
                         )
                         break
+
+                    if p["type"] == constants.FRAME_CONNECT:
+                        # receive_frame() already answered this CONNECT
+                        # (CONNECT_ACK sent, seq state reset, is_connected
+                        # left True) -- the peer has moved on to a new
+                        # session that shares none of our seq numbering.
+                        # Retrying is pointless (frames land as unsolicited
+                        # fragments in the new session) and ABORT is worse
+                        # (it would reference a message the new session
+                        # never asked about, poisoning it in turn). Give up
+                        # immediately rather than exhausting retries.
+                        logger.warning(
+                            f"CONNECT received while awaiting ACK for seq "
+                            f"{seq} -- peer already reset the session; "
+                            "abandoning this send without retrying or "
+                            "sending ABORT (§5.6.2 extension)"
+                        )
+                        self.session_reset_during_send = True
+                        return False
 
                     # If it's a payload frame, it's already been ACKed by receive_frame.
                     # We must queue it so Urst.read() can find it later.

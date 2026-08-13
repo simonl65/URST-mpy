@@ -480,6 +480,41 @@ def test_send_aborts_a_fragmented_message_on_retry_exhaustion(
     assert abort_frames, "sender must send ABORT on retry exhaustion (§5.7.2)"
 
 
+def test_send_does_not_abort_when_peer_reset_the_session_mid_send(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """§5.7.2's ABORT is for a peer still tracking the aborted message.
+
+    Once a CONNECT has reset the peer's session (US-003, §5.6.2
+    extension), that peer no longer knows about our message at all --
+    sending ABORT for it would itself be a stale frame landing in the new
+    session, exactly what US-003 exists to stop. `send_reliable()` already
+    abandons the fragment for this case; `send()` must not paper over that
+    by sending ABORT anyway.
+    """
+    monkeypatch.setattr(constants, "ACK_TIMEOUT_MS", 20)
+    connect = build_frame(constants.FRAME_CONNECT, 0, CAPS)
+    urst = _make_urst(monkeypatch, data=connect)
+
+    big_payload = b"x" * (constants.MAX_PAYLOAD_SIZE - 6 + 1)  # forces FRAG
+    sent = urst.send(big_payload)
+
+    assert sent == 0
+    from urst.protocol_layer import parse_frame
+
+    written = [
+        parse_frame(c) for c in urst.protocol.codec.ser.write_calls
+    ]
+    abort_frames = [p for p in written if p and p["type"] == constants.FRAME_ABORT]
+    assert not abort_frames, (
+        "must not send ABORT into a session the peer already reset"
+    )
+    connect_acks = [
+        p for p in written if p and p["type"] == constants.FRAME_CONNECT_ACK
+    ]
+    assert connect_acks, "the peer's CONNECT must still be answered"
+
+
 def test_fragment_reassembly_times_out_and_is_discarded(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -4,6 +4,22 @@ All notable changes to this project are documented here. Format loosely
 follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions
 correspond to PyPI releases of `urst-mpy` (see `release.sh`).
 
+## Unreleased
+
+### Fixed
+
+- **A CONNECT arriving while `send_reliable()` is still waiting for an ACK is now recognised and abandons the send, instead of being silently ignored and retried against invalidated sequence state (US-003, §5.6.2 extension).**
+
+  `receive_frame()` already answers a mid-stream CONNECT correctly -- it sends CONNECT_ACK and resets `next_send_seq`/`expected_recv_seq`/`last_received_seq` -- but that reset happens underneath a `send_reliable()` call that has no branch for it: the CONNECT frame fell through unhandled, and the sender kept retransmitting its pre-reset `seq` into a session that had just restarted its numbering. The retries land at the peer as fragments of a message it never asked about, and any resulting `ERROR:Fragment transfer failed` reply (device-side, `otampy`'s `manager.py`) becomes the next stale frame poisoning the *following* command -- the mechanism behind `diff-drive-robot`'s intermittent channel-0 wedges (`ping` failing while channel-1 telemetry stays healthy; recoverable only by an MCU reset, not a gateway restart).
+
+  `ProtocolLayer.send_reliable()` now recognises `FRAME_CONNECT` in its ACK-wait loop and returns `False` immediately, without retrying and without sending ABORT -- ABORT would itself reference a message the new session never asked about. A new `session_reset_during_send` flag distinguishes this from an ordinary retry-exhaustion failure so `core_handler.send()` can skip its own ABORT call for the same reason.
+
+  This is the `urst-mpy` side of US-003's three-part scope (`docs/development/urst-stale-response-tasks.md` in `diff-drive-robot`); the `otampy` device library's own `ERROR:Fragment transfer failed` reply on this path is a separate, `otampy`-side change. US-004 (whether this alone lets a new CLI invocation recover an already-wedged device without an MCU reset) is unverified and remains open.
+
+  - `tests/test_protocol.py::TestConnectDuringSend::test_connect_mid_send_should_abandon_the_in_flight_message` (previously `xfail(strict=True)`) now passes; the companion characterisation test in the same class is updated to assert the new one-FRAG-then-abandon behaviour instead of the old four-retries defect.
+  - `tests/test_core_handler.py::test_send_does_not_abort_when_peer_reset_the_session_mid_send` covers `core_handler.send()`'s ABORT suppression.
+  - No wire-format change, no `PROTOCOL_VERSION` bump: purely local behaviour on the sending side.
+
 ## [3.1.1] - 2026-08-12
 
 ### Fixed

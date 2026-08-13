@@ -863,44 +863,40 @@ class TestConnectDuringSend:
     def test_connect_mid_send_resets_seq_state_under_the_sender(
         self, monkeypatch
     ) -> None:
-        """Characterises the defect as it stands today.
+        """The sender's own sequence state is reset by the peer's CONNECT
+        (received and answered inside `receive_frame()`), while
+        `send_reliable()` is still mid-loop using the pre-reset `seq`.
 
-        This test passes against the current implementation on purpose --
-        it pins the exact mechanism so a fix can be judged against it.
+        Retrying against that stale `seq` is exactly what option 3 (§5.6.2
+        extension) exists to prevent -- see
+        `test_connect_mid_send_should_abandon_the_in_flight_message` below
+        for the resulting abandonment.
         """
         connect = build_frame(FRAME_CONNECT, 0, _CAPS)
         codec, protocol = self._mid_stream_sender(monkeypatch, [connect])
 
         result = protocol.send_reliable(FRAME_FRAG, self._fragment())
 
-        assert result is False  # no ACK ever arrives
+        assert result is False  # abandoned, not acknowledged
 
         written = [parse_frame(frame) for frame in codec.written]
         assert [frame["type"] for frame in written] == [
-            FRAME_FRAG,  # attempt 1
+            FRAME_FRAG,  # attempt 1, pre-reset seq
             FRAME_CONNECT_ACK,  # the new session is accepted mid-send
-            FRAME_FRAG,  # attempts 2-4, all after the reset
-            FRAME_FRAG,
-            FRAME_FRAG,
         ]
 
         # The sender's own sequence state was zeroed while it was still
-        # using it, and it carried on regardless.
+        # using it.
         assert protocol.next_send_seq == 0
         assert protocol.expected_recv_seq == 0
         assert protocol.is_connected is True
 
-        # Yet every retransmit still carries the pre-reset seq, which is
-        # meaningless to the peer that just reset the numbering. This is
-        # the desync: seq 5 frames inside a session that restarted at 0.
+        # The one FRAG that did go out still carries the pre-reset seq,
+        # which is meaningless to the peer that just reset the numbering
+        # -- but nothing further is sent into that mismatch.
         frags = [frame for frame in written if frame["type"] == FRAME_FRAG]
-        assert [frame["seq"] for frame in frags] == [5, 5, 5, 5]
+        assert [frame["seq"] for frame in frags] == [5]
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="option 3 not implemented: CONNECT must terminate an "
-        "in-flight message rather than being ignored mid-send",
-    )
     def test_connect_mid_send_should_abandon_the_in_flight_message(
         self, monkeypatch
     ) -> None:

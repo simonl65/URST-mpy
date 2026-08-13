@@ -178,9 +178,14 @@ class Urst:
             if not self.protocol.send_reliable(
                 constants.FRAME_FRAG, header + chunk, request_id
             ):
-                # §5.7.2: tell the peer to drop its partial reassembly
-                # rather than leaving it to time out (§6.3.4).
-                self.protocol.send_abort(msg_id, request_id)
+                if not self.protocol.session_reset_during_send:
+                    # §5.7.2: tell the peer to drop its partial reassembly
+                    # rather than leaving it to time out (§6.3.4).
+                    self.protocol.send_abort(msg_id, request_id)
+                # else: the peer that would receive ABORT already reset
+                # for an unrelated session (§5.6.2 extension) -- ABORT
+                # would reference a message it never asked about, adding
+                # another stale frame to the exact problem this avoids.
                 return i * max_frag_data
 
         if new_request:
