@@ -457,6 +457,36 @@ def test_abort_received_clears_matching_reassembly_state(
     assert urst._reassembly == {}
 
 
+def test_connect_received_mid_reassembly_clears_urst_level_state(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """§5.6.2 obliges the recipient of a CONNECT to clear reassembly
+    buffers and discard any pending expected Request ID (US-104).
+
+    `ProtocolLayer.receive_frame()` already resets its own seq state
+    inline; `_reassembly`, `_reassembly_deadline` and
+    `_awaiting_request_id` live one layer up on `Urst` and were never
+    touched, leaving a compliance gap independent of US-003 (that one is
+    about the *sender* side; this is about being a CONNECT *recipient*,
+    which the spec already covers in text).
+    """
+    frag = build_frame(
+        constants.FRAME_FRAG, 0, bytes([9, 0, 2, 1]) + b"A", request_id=3
+    )
+    connect = build_frame(constants.FRAME_CONNECT, 0, CAPS)
+    urst = _make_urst(monkeypatch, data=frag + connect)
+    monkeypatch.setattr(constants, "ACK_TIMEOUT_MS", 20)
+    urst._awaiting_request_id = 3  # an unrelated request was outstanding
+
+    result = urst.read()
+
+    assert result == b""  # the CONNECT invalidated everything in flight
+    assert urst._reassembly == {}
+    assert urst._reassembly_deadline == {}
+    assert urst._awaiting_request_id is None
+    assert urst.protocol.session_reset_pending is False  # consumed, not left set
+
+
 def test_send_aborts_a_fragmented_message_on_retry_exhaustion(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

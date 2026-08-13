@@ -176,7 +176,23 @@ class ProtocolLayer:
         # send ABORT for a message the peer never asked about (§5.7.2 --
         # ABORT belongs to a session that no longer exists).
         self.session_reset_during_send = False
+        # Set every time _reset_session_state() runs (any CONNECT that
+        # resets seq numbering, as either recipient or initiator).
+        # ProtocolLayer only owns seq state; Urst owns reassembly buffers
+        # and Request ID bookkeeping (§5.8.4) one layer up, so it can't
+        # clear those itself (US-104). Urst checks and clears this flag
+        # after receive_frame() to keep its own state in sync.
+        self.session_reset_pending = False
         logger.debug("Initializing Protocol Layer")
+
+    def _reset_session_state(self) -> None:
+        """Reset seq numbering after a CONNECT (§5.6.2), as recipient or
+        initiator. Flags `session_reset_pending` for the layer above."""
+        self.next_send_seq = 0
+        self.expected_recv_seq = 0
+        self.last_received_seq = -1
+        self.is_connected = True
+        self.session_reset_pending = True
 
     def _peer_version_ok(self, payload: bytes, context: str) -> bool:
         """Check a CONNECT/CONNECT_ACK capability payload's version (§5.6.1.1).
@@ -239,12 +255,7 @@ class ProtocolLayer:
                         # Retrying cannot fix a version mismatch, and the
                         # peer is not going to change its mind: fail now.
                         return False
-                    (
-                        self.next_send_seq,
-                        self.expected_recv_seq,
-                        self.last_received_seq,
-                    ) = 0, 0, -1
-                    self.is_connected = True
+                    self._reset_session_state()
                     logger.debug("URST Connected (received CONNECT_ACK)")
                     return True
                 if p and p["type"] == constants.FRAME_CONNECT:
@@ -263,12 +274,7 @@ class ProtocolLayer:
                             constants.FRAME_CONNECT_ACK, p["seq"], payload
                         )
                     )
-                    (
-                        self.next_send_seq,
-                        self.expected_recv_seq,
-                        self.last_received_seq,
-                    ) = 0, 0, -1
-                    self.is_connected = True
+                    self._reset_session_state()
                     logger.debug(
                         "URST Connected (simultaneous CONNECT resolved)"
                     )
@@ -417,12 +423,7 @@ class ProtocolLayer:
                     self.codec.write_frame(
                         build_frame(constants.FRAME_CONNECT_ACK, seq, payload)
                     )
-                    (
-                        self.next_send_seq,
-                        self.expected_recv_seq,
-                        self.last_received_seq,
-                    ) = 0, 0, -1
-                    self.is_connected = True
+                    self._reset_session_state()
                     return p
                 self.codec.write_frame(
                     build_frame(

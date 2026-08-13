@@ -917,3 +917,49 @@ class TestConnectDuringSend:
         written = [parse_frame(frame) for frame in codec.written]
         frags = [frame for frame in written if frame["type"] == FRAME_FRAG]
         assert len(frags) == 1
+
+    def test_connect_mid_send_flags_session_reset_pending(
+        self, monkeypatch
+    ) -> None:
+        """`session_reset_pending` (US-104) is the general-purpose signal
+        the `Urst` layer above uses to clear its own reassembly/Request ID
+        state -- distinct from `session_reset_during_send`, which only
+        tells `core_handler.send()` to skip ABORT (US-003)."""
+        connect = build_frame(FRAME_CONNECT, 0, _CAPS)
+        codec, protocol = self._mid_stream_sender(monkeypatch, [connect])
+
+        protocol.send_reliable(FRAME_FRAG, self._fragment())
+
+        assert protocol.session_reset_pending is True
+        assert protocol.session_reset_during_send is True
+
+
+class TestSessionResetPending:
+    """`session_reset_pending` (US-104) fires on every path that resets
+    seq numbering, not just the send-side one US-003 cares about."""
+
+    def test_receiving_a_connect_sets_session_reset_pending(self) -> None:
+        incoming = build_frame(FRAME_CONNECT, 0, _CAPS)
+        codec = _ScriptedCodec([incoming])
+        protocol = ProtocolLayer(codec)
+
+        result = protocol.receive_frame(timeout_ms=50)
+
+        assert result is not None
+        assert protocol.session_reset_pending is True
+
+    def test_a_normal_connect_call_sets_session_reset_pending_too(
+        self,
+    ) -> None:
+        """Even an ordinary self-initiated handshake counts: `Urst`
+        consuming the flag is a harmless no-op when nothing was pending,
+        and the alternative -- tracking *why* seq was reset -- is more
+        state than the compliance requirement needs."""
+        connect_ack = build_frame(FRAME_CONNECT_ACK, 0, _CAPS)
+        codec = _ScriptedCodec([connect_ack])
+        protocol = ProtocolLayer(codec)
+
+        result = protocol.connect()
+
+        assert result is True
+        assert protocol.session_reset_pending is True

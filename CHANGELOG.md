@@ -8,13 +8,27 @@ correspond to PyPI releases of `urst-mpy` (see `release.sh`).
 
 ### Fixed
 
+- **`Urst` now clears its own reassembly buffers and pending Request ID when a CONNECT resets the session underneath it, instead of leaving them to reference a session that no longer exists (US-104, §5.6.2 compliance).**
+
+  §5.6.2 already obliges the *recipient* of a CONNECT to reset sequence numbers, clear reassembly buffers, and discard any pending expected Request ID. `ProtocolLayer.receive_frame()`/`connect()` did the seq part inline, but `_reassembly`, `_reassembly_deadline` and `_awaiting_request_id` live one layer up on `Urst` and were never touched -- a plain compliance gap, independent of US-003 (which is about the *sender* side continuing to retry after a reset; this is about a CONNECT recipient's own bookkeeping, which the spec already covers).
+
+  `ProtocolLayer` gained a `_reset_session_state()` helper (replacing three duplicated inline resets in `connect()`/`receive_frame()`) that also sets a new `session_reset_pending` flag -- fired on *any* seq reset, not just the send-abandonment case `session_reset_during_send` (US-003) covers. `Urst._clear_state_on_session_reset()` checks and consumes that flag after every `protocol` call that could have observed a CONNECT (`receive_frame()` inside `read()`, `send_reliable()` inside `send()`'s single-frame and fragment-loop paths), clearing `_reassembly`/`_reassembly_deadline`/`_awaiting_request_id` and re-syncing `read()`'s local `expected` so a request from before the reset can't be matched against a same-numbered request in the new session.
+
+  - `tests/test_core_handler.py::test_connect_received_mid_reassembly_clears_urst_level_state` covers the `Urst`-level clearing.
+  - `tests/test_protocol.py::TestConnectDuringSend::test_connect_mid_send_flags_session_reset_pending` and `TestSessionResetPending` cover the new flag at the `ProtocolLayer` level, including that an ordinary self-initiated handshake also sets it (harmless no-op for `Urst` when nothing was pending).
+  - No wire-format change, no `PROTOCOL_VERSION` bump.
+
+## [3.1.2] - 2026-08-13
+
+### Fixed
+
 - **A CONNECT arriving while `send_reliable()` is still waiting for an ACK is now recognised and abandons the send, instead of being silently ignored and retried against invalidated sequence state (US-003, §5.6.2 extension).**
 
   `receive_frame()` already answers a mid-stream CONNECT correctly -- it sends CONNECT_ACK and resets `next_send_seq`/`expected_recv_seq`/`last_received_seq` -- but that reset happens underneath a `send_reliable()` call that has no branch for it: the CONNECT frame fell through unhandled, and the sender kept retransmitting its pre-reset `seq` into a session that had just restarted its numbering. The retries land at the peer as fragments of a message it never asked about, and any resulting `ERROR:Fragment transfer failed` reply (device-side, `otampy`'s `manager.py`) becomes the next stale frame poisoning the *following* command -- the mechanism behind `diff-drive-robot`'s intermittent channel-0 wedges (`ping` failing while channel-1 telemetry stays healthy; recoverable only by an MCU reset, not a gateway restart).
 
   `ProtocolLayer.send_reliable()` now recognises `FRAME_CONNECT` in its ACK-wait loop and returns `False` immediately, without retrying and without sending ABORT -- ABORT would itself reference a message the new session never asked about. A new `session_reset_during_send` flag distinguishes this from an ordinary retry-exhaustion failure so `core_handler.send()` can skip its own ABORT call for the same reason.
 
-  This is the `urst-mpy` side of US-003's three-part scope (`docs/development/urst-stale-response-tasks.md` in `diff-drive-robot`); the `otampy` device library's own `ERROR:Fragment transfer failed` reply on this path is a separate, `otampy`-side change. US-004 (whether this alone lets a new CLI invocation recover an already-wedged device without an MCU reset) is unverified and remains open.
+  This is the `urst-mpy` side of US-003's three-part scope (`docs/development/urst-stale-response-tasks.md` in `diff-drive-robot`); the `otampy` device library's own `ERROR:Fragment transfer failed` reply on this path is a separate, `otampy`-side change (shipped in `otampy` 4.2.4). US-004 (whether this alone lets a new CLI invocation recover an already-wedged device without an MCU reset) is unverified and remains open.
 
   - `tests/test_protocol.py::TestConnectDuringSend::test_connect_mid_send_should_abandon_the_in_flight_message` (previously `xfail(strict=True)`) now passes; the companion characterisation test in the same class is updated to assert the new one-FRAG-then-abandon behaviour instead of the old four-retries defect.
   - `tests/test_core_handler.py::test_send_does_not_abort_when_peer_reset_the_session_mid_send` covers `core_handler.send()`'s ABORT suppression.

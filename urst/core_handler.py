@@ -141,6 +141,24 @@ class Urst:
         self._awaiting_request_id: int | None = None
         self.last_request_id: int | None = None
 
+    def _clear_state_on_session_reset(self) -> None:
+        """Clear reassembly/Request ID bookkeeping after a CONNECT reset
+        the session underneath us (§5.6.2; US-104).
+
+        `ProtocolLayer` owns and resets its own seq state inline
+        (`_reset_session_state()`); `_reassembly`, `_reassembly_deadline`
+        and `_awaiting_request_id` live here instead, one layer up, so it
+        can't clear them itself. Checked after every `protocol` call that
+        could have observed a CONNECT (`receive_frame()` inside `read()`,
+        `send_reliable()` inside `send()`).
+        """
+        if not self.protocol.session_reset_pending:
+            return
+        self.protocol.session_reset_pending = False
+        self._reassembly.clear()
+        self._reassembly_deadline.clear()
+        self._awaiting_request_id = None
+
     def send(self, data: bytes, request_id: int | None = None) -> int:
         """
         Send data over the URST transport with automatic fragmentation and reliability.
@@ -165,6 +183,7 @@ class Urst:
                 if new_request:
                     self._awaiting_request_id = request_id
                 return len(data)
+            self._clear_state_on_session_reset()
             return 0
 
         total_frags = (len(data) + max_frag_data - 1) // max_frag_data
@@ -186,6 +205,7 @@ class Urst:
                 # for an unrelated session (§5.6.2 extension) -- ABORT
                 # would reference a message it never asked about, adding
                 # another stale frame to the exact problem this avoids.
+                self._clear_state_on_session_reset()
                 return i * max_frag_data
 
         if new_request:
@@ -257,6 +277,13 @@ class Urst:
             frame = self.protocol.receive_frame()
             if not frame:
                 return b""  # Timeout or duplicate frame (already ACKed)
+
+            # A CONNECT may have just reset the session (§5.6.2; US-104).
+            # Re-sync `expected` from the (now possibly cleared)
+            # `_awaiting_request_id` -- a no-op unless a reset happened,
+            # since nothing else changes it mid-loop.
+            self._clear_state_on_session_reset()
+            expected = self._awaiting_request_id
 
             frame_type = frame["type"]
             payload = frame["payload"]
