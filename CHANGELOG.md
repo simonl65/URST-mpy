@@ -18,6 +18,8 @@ correspond to PyPI releases of `urst-mpy` (see `release.sh`).
 
   - `tests/test_codec.py::TestMinTxGap` covers the default no-op case, sleeping for the remaining gap, not sleeping once the gap has naturally elapsed, and the first write never sleeping.
 
+## [3.1.3] - 2026-08-13
+
 ### Fixed
 
 - **`Urst` now clears its own reassembly buffers and pending Request ID when a CONNECT resets the session underneath it, instead of leaving them to reference a session that no longer exists (US-104, §5.6.2 compliance).**
