@@ -1,11 +1,101 @@
 import struct
 
+from urst import codec_layer
 from urst.codec_layer import (
+    CodecLayer,
     calculate_crc16,
     cobs_decode,
     cobs_encode,
     serialize_crc,
 )
+
+
+class FakeSerial:
+    def __init__(self) -> None:
+        self.write_calls: list[bytes] = []
+
+    def write(self, data: bytes) -> int:
+        self.write_calls.append(data)
+        return len(data)
+
+    def flush(self) -> None:
+        pass
+
+
+class TestMinTxGap:
+    """`min_tx_gap_ms` (§ hardware note, URST-mpy#N): an opt-in minimum gap
+    enforced between the end of one write_frame() and the start of the
+    next. Default 0 -- zero behaviour change for existing users/hardware.
+    Added after diff-drive-robot's bench testing found that some
+    half-duplex transparent-mode radios corrupt reception when a device
+    transmits back-to-back with no inter-frame gap; CodecLayer.write_frame
+    is the single point every URST frame type (ACK, NAK, DATA, FRAG,
+    CONNECT, CONNECT_ACK, ...) already funnels through, so enforcing the
+    gap here protects all of them without touching any other layer."""
+
+    def test_default_gap_is_zero_and_never_sleeps(self, monkeypatch) -> None:
+        sleep_calls = []
+        monkeypatch.setattr(
+            codec_layer.time, "sleep_ms", lambda ms: sleep_calls.append(ms)
+        )
+        ser = FakeSerial()
+        codec = CodecLayer(ser)
+
+        codec.write_frame(b"frame one")
+        codec.write_frame(b"frame two")
+
+        assert sleep_calls == []
+        assert ser.write_calls == [b"frame one", b"frame two"]
+
+    def test_sleeps_for_the_remaining_gap_when_writes_are_close(
+        self, monkeypatch
+    ) -> None:
+        sleep_calls = []
+        monkeypatch.setattr(
+            codec_layer.time, "sleep_ms", lambda ms: sleep_calls.append(ms)
+        )
+        clock = [1_000]
+        monkeypatch.setattr(codec_layer.time, "ticks_ms", lambda: clock[0])
+        ser = FakeSerial()
+        codec = CodecLayer(ser, min_tx_gap_ms=20)
+
+        codec.write_frame(b"first")
+        clock[0] += 5  # only 5ms elapsed, 15ms short of the 20ms floor
+        codec.write_frame(b"second")
+
+        assert sleep_calls == [15]
+
+    def test_does_not_sleep_once_the_gap_has_naturally_elapsed(
+        self, monkeypatch
+    ) -> None:
+        sleep_calls = []
+        monkeypatch.setattr(
+            codec_layer.time, "sleep_ms", lambda ms: sleep_calls.append(ms)
+        )
+        clock = [1_000]
+        monkeypatch.setattr(codec_layer.time, "ticks_ms", lambda: clock[0])
+        ser = FakeSerial()
+        codec = CodecLayer(ser, min_tx_gap_ms=20)
+
+        codec.write_frame(b"first")
+        clock[0] += 25  # already past the 20ms floor
+        codec.write_frame(b"second")
+
+        assert sleep_calls == []
+
+    def test_first_write_never_sleeps_with_no_prior_write(
+        self, monkeypatch
+    ) -> None:
+        sleep_calls = []
+        monkeypatch.setattr(
+            codec_layer.time, "sleep_ms", lambda ms: sleep_calls.append(ms)
+        )
+        ser = FakeSerial()
+        codec = CodecLayer(ser, min_tx_gap_ms=20)
+
+        codec.write_frame(b"only frame")
+
+        assert sleep_calls == []
 
 
 class TestCRC16:

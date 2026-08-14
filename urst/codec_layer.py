@@ -38,8 +38,12 @@ except AttributeError:
     def ticks_diff(later, earlier):
         return later - earlier
 
+    def sleep_ms(ms):
+        time.sleep(ms / 1000)
+
     time.ticks_ms = ticks_ms
     time.ticks_diff = ticks_diff
+    time.sleep_ms = sleep_ms
 
 from . import constants  # noqa: E402
 
@@ -167,8 +171,20 @@ class CodecLayer:
     Handles encoding and decoding of URST packets at the byte level.
     """
 
-    def __init__(self, ser: Any):
+    def __init__(self, ser: Any, min_tx_gap_ms: int = 0):
+        """
+        `min_tx_gap_ms`: opt-in minimum gap enforced between the end of one
+        write_frame() and the start of the next. Default 0 -- no behaviour
+        change. Some half-duplex transparent-mode radios corrupt reception
+        when a device transmits back-to-back with no inter-frame gap; every
+        URST frame type (ACK, NAK, DATA, FRAG, CONNECT, CONNECT_ACK, ...)
+        already funnels through write_frame(), so enforcing the gap here
+        protects all of them without any other layer needing to know about
+        it. Set this to whatever your specific radio/link needs.
+        """
         self.ser = ser
+        self.min_tx_gap_ms = min_tx_gap_ms
+        self._last_write_done_ms = None
         self._rx_buffer = bytearray()
         logger.debug("Initializing Codec Layer")
 
@@ -216,11 +232,22 @@ class CodecLayer:
 
     def write_frame(self, frame: bytes) -> int:
         """
-        Write a complete physical frame to the serial port.
+        Write a complete physical frame to the serial port, first waiting
+        out any remaining min_tx_gap_ms since the previous write finished.
         """
+        if self.min_tx_gap_ms and self._last_write_done_ms is not None:
+            elapsed = time.ticks_diff(time.ticks_ms(), self._last_write_done_ms)
+            remaining = self.min_tx_gap_ms - elapsed
+            if remaining > 0:
+                time.sleep_ms(remaining)
         sent = self.ser.write(frame)
         if hasattr(self.ser, "flush"):
             self.ser.flush()
+        # Taken after flush(), which blocks until the bytes are physically
+        # drained (true for both pyserial and MicroPython's blocking
+        # UART.write) -- this is the real end of transmission, not just
+        # when the call returned.
+        self._last_write_done_ms = time.ticks_ms()
         return sent
 
     def read_frame(self, timeout_ms: int = 1000) -> bytes | None:

@@ -6,6 +6,18 @@ correspond to PyPI releases of `urst-mpy` (see `release.sh`).
 
 ## Unreleased
 
+### Added
+
+- **`CodecLayer(ser, min_tx_gap_ms=0)`: an opt-in minimum gap enforced between the end of one `write_frame()` and the start of the next.**
+
+  Bench testing on `diff-drive-robot` (old MaxStream XBee Pro 802.15.4 radios, transparent/AP=0 mode) found that a device transmitting frames back-to-back with no inter-frame gap reliably corrupts reception at the other end -- confirmed not explainable by `RO` (packetization timeout, already at its ~521µs default) or by payload size/buffer size, and confirmed fixed by pacing transmissions at >=20ms. This is a hardware/link characteristic, not a URST protocol defect -- other half-duplex or transparent-mode radios could plausibly have similar constraints.
+
+  `CodecLayer.write_frame()` is the single point every URST frame type (`ACK`, `NAK`, `DATA`, `FRAG`, `CONNECT`, `CONNECT_ACK`, `ABORT`, `ERROR`, `BUSY`, `READY`) already funnels through, so enforcing the gap there protects all of them without any change to `ProtocolLayer` or `Urst`. Default is `0` -- zero behaviour change for existing users/hardware; each user configures whatever their own link needs at `CodecLayer` construction time. The gap is measured from *after* the previous write's `flush()` returns (which blocks until the bytes are physically drained, for both `pyserial` and MicroPython's blocking `UART.write`), not from when the call returned, so it reflects real end-of-transmission timing.
+
+  No wire-format change, no `PROTOCOL_VERSION` bump -- this only affects the pacing of an implementation's own outgoing writes.
+
+  - `tests/test_codec.py::TestMinTxGap` covers the default no-op case, sleeping for the remaining gap, not sleeping once the gap has naturally elapsed, and the first write never sleeping.
+
 ### Fixed
 
 - **`Urst` now clears its own reassembly buffers and pending Request ID when a CONNECT resets the session underneath it, instead of leaving them to reference a session that no longer exists (US-104, §5.6.2 compliance).**
