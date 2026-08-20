@@ -21,6 +21,4 @@ ruff_cache/
 **/config.py
 .agents
 .kiro
-
-# Local-only task list (see otampy's .gitignore for the same convention)
-TODO.*
+TODO.old
