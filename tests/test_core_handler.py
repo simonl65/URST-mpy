@@ -66,7 +66,7 @@ class FakeUart(FakeSerial):
 
 
 @pytest.fixture
-def micropython_runtime(monkeypatch: pytest.MonkeyPatch):
+def micropython_runtime(monkeypatch: pytest.MonkeyPatch) -> type[FakeUart]:
     FakeUart.init_calls.clear()
     monkeypatch.setattr(
         sys, "implementation", SimpleNamespace(name="micropython")
@@ -87,9 +87,10 @@ def test_micropython_accepts_machine_uart(micropython_runtime) -> None:
 def test_micropython_accepts_uart_identifier(micropython_runtime) -> None:
     transport = Urst(1, baud=115200)
 
-    assert isinstance(transport.ser, micropython_runtime)
-    assert transport.ser.port == 1
-    assert transport.ser.baudrate == 115200
+    ser = transport.ser
+    assert isinstance(ser, FakeUart)
+    assert ser.port == 1
+    assert ser.baudrate == 115200
     assert micropython_runtime.init_calls == [(1, 115200)]
 
 
@@ -502,10 +503,10 @@ def test_send_aborts_a_fragmented_message_on_retry_exhaustion(
     from urst.protocol_layer import parse_frame
 
     abort_frames = [
-        parse_frame(c)
+        parsed
         for c in urst.protocol.codec.ser.write_calls
-        if parse_frame(c) is not None
-        and parse_frame(c)["type"] == constants.FRAME_ABORT
+        if (parsed := parse_frame(c)) is not None
+        and parsed["type"] == constants.FRAME_ABORT
     ]
     assert abort_frames, "sender must send ABORT on retry exhaustion (§5.7.2)"
 

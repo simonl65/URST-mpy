@@ -171,7 +171,7 @@ class CodecLayer:
     Handles encoding and decoding of URST packets at the byte level.
     """
 
-    def __init__(self, ser: Any, min_tx_gap_ms: int = 0):
+    def __init__(self, ser: Any, min_tx_gap_ms: int = 0):  # pyright: ignore[reportPossiblyUnboundVariable]
         """
         `min_tx_gap_ms`: opt-in minimum gap enforced between the end of one
         write_frame() and the start of the next. Default 0 -- no behaviour
@@ -182,7 +182,7 @@ class CodecLayer:
         protects all of them without any other layer needing to know about
         it. Set this to whatever your specific radio/link needs.
         """
-        self.ser = ser
+        self.ser = ser  # pyright: ignore[reportPossiblyUnboundVariable]
         self.min_tx_gap_ms = min_tx_gap_ms
         self._last_write_done_ms = None
         self._rx_buffer = bytearray()

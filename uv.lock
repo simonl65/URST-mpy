@@ -105,6 +105,26 @@ wheels = [
 ]
 
 [[package]]
+name = "micropython-rp2-rpi-pico-w-stubs"
+version = "1.28.0.post4"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "micropython-stdlib-stubs" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/af/6e/b40ac27b00e2a0de88a8bf26f8f87d764a1c9c75a2152980c486031baa08/micropython_rp2_rpi_pico_w_stubs-1.28.0.post4.tar.gz", hash = "sha256:6d4f9ca86632c3c72e148753b50be60c2d304689508c5d8b5503ba9ac7a8b2d1", size = 98118, upload-time = "2026-05-20T12:36:01.053Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/34/fd/8882e0f968d481e8e739f7b69b65b05ee74b8662deea0497fb6981140cd2/micropython_rp2_rpi_pico_w_stubs-1.28.0.post4-py2.py3-none-any.whl", hash = "sha256:6337f87243cba58307d0a058860a36461616a820b7c758397f2144456f222a20", size = 125570, upload-time = "2026-05-20T12:36:02.137Z" },
+]
+
+[[package]]
+name = "micropython-stdlib-stubs"
+version = "1.28.0.post6"
+source = { registry = "https://pypi.org/simple" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/cd/e3/4edfda3791ea58edb220e319e9be9511545aa4c02e280bbe087c21c36038/micropython_stdlib_stubs-1.28.0.post6-py3-none-any.whl", hash = "sha256:b0a707f852365f03792b23964b48a0304cbb18eecc1b743e0d5b96712b775909", size = 150306, upload-time = "2026-07-19T21:10:22.02Z" },
+]
+
+[[package]]
 name = "packaging"
 version = "26.2"
 source = { registry = "https://pypi.org/simple" }
@@ -203,8 +223,14 @@ dependencies = [
     { name = "pyserial" },
 ]
 
+[package.optional-dependencies]
+stubs = [
+    { name = "micropython-rp2-rpi-pico-w-stubs" },
+]
+
 [package.dev-dependencies]
 dev = [
+    { name = "micropython-rp2-rpi-pico-w-stubs" },
     { name = "pytest" },
     { name = "pytest-cov" },
     { name = "ruff" },
@@ -212,10 +238,15 @@ dev = [
 ]
 
 [package.metadata]
-requires-dist = [{ name = "pyserial", specifier = ">=3.5" }]
+requires-dist = [
+    { name = "micropython-rp2-rpi-pico-w-stubs", marker = "extra == 'stubs'", specifier = "==1.28.0.*" },
+    { name = "pyserial", specifier = ">=3.5" },
+]
+provides-extras = ["stubs"]
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "micropython-rp2-rpi-pico-w-stubs", specifier = "==1.28.0.*" },
     { name = "pytest", specifier = ">=8.0" },
     { name = "pytest-cov", specifier = ">=5.0" },
     { name = "ruff", specifier = ">=0.4" },

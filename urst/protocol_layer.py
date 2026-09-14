@@ -161,13 +161,15 @@ class ProtocolLayer:
     Handles the URST protocol logic, including sequence management and reliable delivery.
     """
 
-    def __init__(self, codec: Any):
-        self.codec = codec
+    # `Any`'s import is only conditional for MicroPython compatibility (see
+    # top of file); typing.Any is always available on CPython.
+    def __init__(self, codec: Any):  # pyright: ignore[reportPossiblyUnboundVariable]
+        self.codec = codec  # pyright: ignore[reportPossiblyUnboundVariable]
         self.next_send_seq = 0
         self.expected_recv_seq = 0
         self.last_received_seq = -1
         self.is_connected = False
-        self._recv_queue = deque(
+        self._recv_queue: deque = deque(
             (), constants.MAX_FRAGMENTS
         )  # O(1) popleft on MicroPython
         # Set by send_reliable() when a CONNECT from the peer abandons the

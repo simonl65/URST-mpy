@@ -35,6 +35,14 @@ MAX_FRAGMENTS       = constants.MAX_FRAGMENTS
 MAX_FRAG_DATA: int = MAX_PAYLOAD_SIZE - 6  # 194 bytes per spec §6.3.1
 # fmt: on
 
+
+def _parsed(frame: bytes) -> dict:
+    """parse_frame(), asserting it actually parsed -- every frame here is
+    built by build_frame(), so a None means the test itself is broken."""
+    parsed = parse_frame(frame)
+    assert parsed is not None
+    return parsed
+
 # A conformant CONNECT/CONNECT_ACK capability payload (§5.6.1); byte 0 is
 # protocol_version, which peers validate before connecting (§5.6.1.1).
 _CAPS = bytes([constants.PROTOCOL_VERSION, 0, 32, 32, 1, 232, 3, 3, 0])
@@ -258,6 +266,7 @@ class TestSequenceNumbers:
         for seq in [0, 1, 127, 254, 255]:
             frame = build_frame(FRAME_DATA, seq, b"x")
             parsed = parse_frame(frame)
+            assert parsed is not None
             assert parsed["seq"] == seq
 
     def test_ack_echoes_sequence_number(self) -> None:
@@ -386,6 +395,7 @@ class TestFragmentation:
         payload: bytes = b"short"
         frame: bytes = build_frame(FRAME_DATA, 0, payload)
         parsed: dict | None = parse_frame(frame)
+        assert parsed is not None
         assert parsed["type"] == FRAME_DATA, (
             "Messages < 194 bytes MUST use DATA, not FRAG (§6.4)"
         )
@@ -506,6 +516,7 @@ class TestErrorFrame:
         payload: bytes = self._build_error_payload()
         frame: bytes = build_frame(FRAME_ERROR, 0, payload)
         parsed: dict | None = parse_frame(frame)
+        assert parsed is not None
         assert parsed["type"] == FRAME_ERROR
 
     def test_capability_exceeded_error_code(self) -> None:
@@ -537,11 +548,13 @@ class TestAbortFrame:
     def test_abort_frame_type(self) -> None:
         frame: bytes = build_frame(FRAME_ABORT, 0)
         parsed: dict | None = parse_frame(frame)
+        assert parsed is not None
         assert parsed["type"] == FRAME_ABORT
 
     def test_abort_empty_payload(self) -> None:
         frame: bytes = build_frame(FRAME_ABORT, 0)
         parsed: dict | None = parse_frame(frame)
+        assert parsed is not None
         assert len(parsed["payload"]) == 0
 
     def test_abort_with_reason_code(self) -> None:
@@ -643,6 +656,7 @@ class TestFrameSizeBoundaries:
         frame: bytes = build_frame(FRAME_ACK, 0)
         interior: bytes = frame[1:-1]
         decoded: bytes | None = cobs_decode(interior)
+        assert decoded is not None
         assert len(decoded) == 5, (
             "Header-only logical frame + CRC must be 5 bytes"
         )
@@ -652,6 +666,7 @@ class TestFrameSizeBoundaries:
         frame: bytes = build_frame(FRAME_DATA, 0, bytes(MAX_PAYLOAD_SIZE))
         interior: bytes = frame[1:-1]
         decoded: bytes | None = cobs_decode(interior)
+        assert decoded is not None
         assert len(decoded) == 205, "Max logical frame + CRC must be 205 bytes"
 
     def test_physical_frame_under_max(self) -> None:
@@ -696,6 +711,7 @@ class TestMiscellaneous:
         f2: bytes = build_frame(FRAME_DATA, 2, b"frame two")
         p1: dict | None = parse_frame(f1)
         p2: dict | None = parse_frame(f2)
+        assert p1 is not None and p2 is not None
         assert p1["seq"] == 1 and p1["payload"] == b"frame one"
         assert p2["seq"] == 2 and p2["payload"] == b"frame two"
 
@@ -804,6 +820,7 @@ class TestNakTriggersResync:
         first = parse_frame(codec.written[0])
         resync = parse_frame(codec.written[1])
         retry = parse_frame(codec.written[2])
+        assert first is not None and resync is not None and retry is not None
         assert first["type"] == FRAME_DATA
         assert resync["type"] == FRAME_CONNECT
         assert retry["type"] == FRAME_DATA
@@ -879,7 +896,7 @@ class TestConnectDuringSend:
 
         assert result is False  # abandoned, not acknowledged
 
-        written = [parse_frame(frame) for frame in codec.written]
+        written = [_parsed(frame) for frame in codec.written]
         assert [frame["type"] for frame in written] == [
             FRAME_FRAG,  # attempt 1, pre-reset seq
             FRAME_CONNECT_ACK,  # the new session is accepted mid-send
@@ -914,7 +931,7 @@ class TestConnectDuringSend:
         result = protocol.send_reliable(FRAME_FRAG, self._fragment())
 
         assert result is not True
-        written = [parse_frame(frame) for frame in codec.written]
+        written = [_parsed(frame) for frame in codec.written]
         frags = [frame for frame in written if frame["type"] == FRAME_FRAG]
         assert len(frags) == 1
 

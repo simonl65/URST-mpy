@@ -22,3 +22,7 @@ ruff_cache/
 .agents
 .kiro
 TODO.old
+
+# Regenerated locally by setup_micropython_stubs.py (see pyproject.toml
+# [tool.pyright]) -- not committed, same as otampy/diff-drive-robot.
+typings*

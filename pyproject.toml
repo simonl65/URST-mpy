@@ -32,7 +32,13 @@ module-root = ""
 module-name = "urst"
 
 [dependency-groups]
-dev = ["pytest>=8.0", "pytest-cov>=5.0", "ruff>=0.4", "uv-build>=0.11.19"]
+dev = [
+    "pytest>=8.0",
+    "pytest-cov>=5.0",
+    "ruff>=0.4",
+    "uv-build>=0.11.19",
+    "micropython-rp2-rpi_pico_w-stubs==1.28.0.*",
+]
 
 
 # --- Ruff ---
@@ -67,3 +73,41 @@ minversion = "6.0"
 pythonpath = ["."]
 testpaths = ["tests"]
 python_files = ["test_*.py", "*_test.py", "*_tests.py"]
+
+[tool.pyright]
+include = ["."]
+extraPaths = ["urst"]
+ignore = ["**/typings"]
+exclude = [
+    ".*",
+    "__*",
+    "**/typings",
+    "**/node_modules",
+    "**/__pycache__",
+    ".venv",
+]
+
+typeCheckingMode = "standard"
+pythonPlatform = "Linux"
+# Pin this repo's own venv explicitly rather than relying on VIRTUAL_ENV
+# being set -- without this, pyright silently falls back to whatever
+# "python3" is on PATH when run outside an activated venv.
+venvPath = "."
+venv = ".venv"
+# stubPath overlays typings/ on top of the bundled typeshed (pyright
+# prefers a matching stub over the bundled module), giving the
+# MicroPython-only urst/ code (time.ticks_ms, micropython.native, etc.)
+# its real signatures without discarding the bundled stdlib -- tests/
+# run on the host under CPython and need real dataclasses, pathlib, etc.
+# Not typeshedPath = "typings" too: that replaces the typeshed wholesale
+# rather than overlaying it, and silently breaks unrelated stdlib.
+stubPath = "typings"
+
+reportMissingModuleSource = "none"
+
+[project.optional-dependencies]
+# install to folder typings
+# uv pip install -r pyproject.toml --extra stubs --target typings
+stubs = [
+  "micropython-rp2-rpi_pico_w-stubs==1.28.0.*"
+]

@@ -60,13 +60,13 @@ def send_configuration(
             # Read response
             resp = b""
             while uart.any():
-                resp += uart.readline()
+                resp += uart.readline() or b""
 
             if b"OK" not in resp:
                 # Try to read more
                 utime.sleep(0.1)
                 while uart.any():
-                    resp += uart.readline()
+                    resp += uart.readline() or b""
 
             if b"OK" in resp:
                 print("Successfully entered command mode")
@@ -81,12 +81,12 @@ def send_configuration(
                     utime.sleep(0.1)  # small delay for response
                     resp = b""
                     while uart.any():
-                        resp += uart.readline()
+                        resp += uart.readline() or b""
 
                     if b"OK" not in resp:
                         utime.sleep(0.1)
                         while uart.any():
-                            resp += uart.readline()
+                            resp += uart.readline() or b""
 
                     print(f"> {clean_cmd}  ->  {resp.decode().strip()}")
                     utime.sleep(0.5)  # delay between commands

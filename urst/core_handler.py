@@ -95,31 +95,38 @@ class Urst:
     Main interface for the Universal Reliable Serial Transport (URST) protocol.
     """
 
-    def __init__(self, port: Any, baud: int = 57600, *, timeout: float = 1.0):
+    # `Any`'s import is only conditional for MicroPython compatibility (see
+    # top of file); typing.Any is always available on CPython. That makes
+    # pyright treat this whole method's body as possibly running without
+    # `Any` bound, cascading a possibly-unbound warning onto every use of
+    # `port` below too, despite it being a plain, always-bound parameter.
+    def __init__(self, port: Any, baud: int = 57600, *, timeout: float = 1.0):  # pyright: ignore[reportPossiblyUnboundVariable]
         logger.debug("Initializing Urst")
-        self.port = port
+        self.port = port  # pyright: ignore[reportPossiblyUnboundVariable]
         self.baud = baud
         self.timeout = timeout
 
         if sys.implementation.name == "micropython":
             import machine
 
-            if isinstance(port, machine.UART) or _is_serial_like(port):
-                self.ser = port
+            if isinstance(port, machine.UART) or _is_serial_like(port):  # pyright: ignore[reportPossiblyUnboundVariable]
+                self.ser = port  # pyright: ignore[reportPossiblyUnboundVariable]
             else:
                 # port could be id (int)
                 self.ser = machine.UART(port, baudrate=baud)  # type: ignore
         else:
             # Desktop implementation
-            if _is_serial_like(port):
+            if _is_serial_like(port):  # pyright: ignore[reportPossiblyUnboundVariable]
                 # Already a serial-like object (e.g. mock or already opened serial)
-                self.ser = port
+                self.ser = port  # pyright: ignore[reportPossiblyUnboundVariable]
             else:
                 try:
                     from serial import Serial as SerialImpl  # type: ignore
 
                     self.ser = SerialImpl(
-                        port=port, baudrate=baud, timeout=timeout
+                        port=port,  # pyright: ignore[reportPossiblyUnboundVariable]
+                        baudrate=baud,
+                        timeout=timeout,
                     )
                 except ImportError as exc:
                     raise RuntimeError(
@@ -132,7 +139,7 @@ class Urst:
         # Reassembly state keyed by (request_id, msg_id) -- see §5.8.4. Two
         # unrelated exchanges whose independently-wrapping Message IDs
         # happen to collide MUST NOT be reassembled into one message.
-        self._reassembly: dict[tuple[int, int], Any] = {}
+        self._reassembly: dict[tuple[int, int], Any] = {}  # pyright: ignore[reportPossiblyUnboundVariable]
         self._reassembly_deadline: dict[tuple[int, int], int] = {}
         # Request ID bookkeeping (§5.8). The starting value is randomised
         # so a fresh session cannot mistake the previous one's leftover
@@ -326,7 +333,11 @@ class Urst:
                         )
                         continue
                     self._reassembly[key] = {"total": total, "fragments": {}}
-                    self._reassembly_deadline[key] = time.ticks_add(
+                    # ticks_add returns an opaque wraparound-safe "ticks"
+                    # value (stubbed as _TicksMs, not int-convertible) --
+                    # deadlines are only ever compared via ticks_diff
+                    # (below), never as plain ints, so this is safe.
+                    self._reassembly_deadline[key] = time.ticks_add(  # pyright: ignore[reportArgumentType]
                         time.ticks_ms(), self._fragment_timeout_ms(total)
                     )
 
